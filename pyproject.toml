@@ -1,0 +1,22 @@
+[tool.ruff]
+# Sets the maximum line length to 79 characters, as per PEP 8 standards.
+line-length = 79
+
+[tool.ruff.lint]
+# Enable standard linting rules:
+# E, W: PEP 8 style errors and warnings.
+# F: Pyflakes (logical errors like unused imports).
+# D: Pydocstyle (PEP 257 docstring conventions).
+# I: Isort (standardized import sorting).
+select = ["E", "W", "F", "D", "I"]
+
+[tool.ruff.lint.pydocstyle]
+# Use the Google docstring convention, which is clean and widely used 
+# in professional Python scientific software.
+convention = "google"
+
+[tool.ruff.lint.pycodestyle]
+
+[tool.ruff.lint.per-file-ignores]
+# Ignore docstring requirements in tests to maintain focus on logic.
+"tests/*" = ["D"]
