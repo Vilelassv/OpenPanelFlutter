@@ -1,18 +1,22 @@
 # %%
-"""AA-250: Aeroelasticity Comprehensive Examples - Slide 02.
+"""AE-250: Aeroelasticity Comprehensive Examples - Slide 03.
 
-This script contains a suite of examples for validating panel flutter,
-thermal buckling, and vibration modes of curved/flat aerospace panels.
+This script contains a suite of examples for validating nonlinear post flutter
+assessment with literature benchmarks.
 All examples follow the AE-250 Course curriculum (ITA).
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-from Fcns.analysis import Analysis
-from Fcns.definitions import BasisFunction, StructuralTheory, apply_plot_style
-from Fcns.material import Isotropic, Laminate
-from Fcns.panel import Panel
+from openpanelflutter.analysis import Analysis
+from openpanelflutter.definitions import (
+    BasisFunction,
+    StructuralTheory,
+    apply_plot_style,
+)
+from openpanelflutter.material import Isotropic, Laminate
+from openpanelflutter.panel import Panel
 
 # Configuring the global Matplotlib style
 apply_plot_style()
@@ -33,11 +37,16 @@ def get_default_laminate():
 
 
 def run_flutter_analysis(n_func, lamb):
-    """Perform flutter analysis for a given panel curvature.
+    """Perform post flutter analysis for a given aerodynamic loading.
 
     Args:
         n_func (int): Number of basis functions used in the panel kinematics.
-        lamb (array_like): Aerodynamic loading parameters for the flutter scan.
+        lamb (array_like): Aerodynamic loading parameters.
+
+    Returns:
+        tuple[float, float]: A tuple containing:
+            - max_amp (float): Maximum LCO amplitude over entire panel.
+            - local_amp (float): LCO amplitude at (xi, eta) = (0.5, 0.0).
     """
     laminate = get_default_laminate()
 
@@ -52,7 +61,7 @@ def run_flutter_analysis(n_func, lamb):
 
     sim = Analysis(panel)
 
-    wa_max, wa_point = sim.post_flutter_sim(
+    max_amp, local_amp = sim.post_flutter_sim(
         lamb, 0.2, 1e-7, -1, parallel=True, num_proc=4
     )
 
@@ -75,7 +84,7 @@ def run_flutter_analysis(n_func, lamb):
         plt.xlabel("Time $[s]$", fontsize=10)
         plt.show()
 
-    return wa_max, wa_point
+    return max_amp, local_amp
 
 
 if __name__ == "__main__":

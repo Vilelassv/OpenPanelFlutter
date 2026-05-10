@@ -7,10 +7,14 @@ This scripts solves first exercices List of class AA-250.
 import matplotlib.pyplot as plt
 import numpy as np
 
-from Fcns.analysis import Analysis
-from Fcns.definitions import BasisFunction, StructuralTheory, apply_plot_style
-from Fcns.material import Isotropic, Laminate
-from Fcns.panel import Panel
+from openpanelflutter.analysis import Analysis
+from openpanelflutter.definitions import (
+    BasisFunction,
+    StructuralTheory,
+    apply_plot_style,
+)
+from openpanelflutter.material import Isotropic, Laminate
+from openpanelflutter.panel import Panel
 
 # Configuring the global Matplotlib style
 apply_plot_style()
