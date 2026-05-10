@@ -1,3 +1,6 @@
 research/
+*.egg-info/
+.venv/
+.DS_Store
 __pycache__/
 *.pyc
