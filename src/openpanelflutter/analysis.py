@@ -12,6 +12,7 @@ from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.linalg as la
+from scipy.optimize import linear_sum_assignment
 
 from .definitions import apply_plot_style
 from .integrator import Integrator
@@ -118,6 +119,9 @@ class Analysis:
 
         curvature = 1.0 / self.panel.radius if self.panel.radius > 0.0 else 0.0
 
+        phi_ref = None  # Reference mode shapes for tracking across the sweep
+        val_ref = None  # Previous eigenvalues for tracking mode evolution
+
         for i, mach in enumerate(mach_array):
             # Piston Theory Parameters
             beta = np.sqrt(mach**2 - 1)
@@ -151,10 +155,12 @@ class Analysis:
             eigvals = eigvals[::2]
             mode_shapes = eigvecs[:num_dofs, ::2]
 
-            # Sort by frequency magnitude
-            sort_idx = np.abs(eigvals).argsort()
-            eigvals = eigvals[sort_idx]
-            mode_shapes = mode_shapes[:, sort_idx]
+            # Sort by mac to maintain mode tracking across the sweep
+            eigvals, mode_shapes = self.sort_modes(
+                eigvals, mode_shapes, val_ref, phi_ref
+            )
+            # Update reference for next iteration
+            phi_ref = mode_shapes
 
             # Store results
             self.omega_hz[i, :] = np.abs(eigvals) / (2.0 * np.pi)
@@ -167,6 +173,100 @@ class Analysis:
         self.lambdas = (
             2.0 * (0.5 * self.rho_air * v_infs**2) / np.sqrt(mach_array**2 - 1)
         )
+
+    def align_eigenvector_phase(self, phi):
+        """Align the phase of eigenvectors to ensure consistency for MAC.
+
+        For each mode, it identifies the element with the largest magnitude
+        and rotates the vector so that this element is real and positive.
+
+        :param phi: Eigenvector matrix (modes in columns).
+        :return: Phase-aligned eigenvector matrix.
+        """
+        for i in range(phi.shape[1]):
+            max_idx = np.argmax(np.abs(phi[:, i]))
+            phase = np.angle(phi[max_idx, i])
+            phi[:, i] *= np.exp(-1j * phase)
+        return phi
+
+    def compute_mac_matrix(self, phi_a, phi_b):
+        """Calculate the Modal Assurance Criterion between two sets of modes.
+
+        The MAC values range from 0 (no correlation) to 1 (correlation).
+        It is defined as the square of the scalar product of the eigenvectors
+        normalized by their magnitudes.
+
+        Args:
+            phi_a (ndarray): Reference eigenvectors matrix [n_dof, n_modes].
+            phi_b (ndarray): New eigenvectors matrix [n_dof, n_modes].
+
+        Returns:
+            numpy.ndarray: MAC matrix where entry (i, j) is the correlation
+                between phi_a[:, i] and phi_b[:, j].
+        """
+        # Align phases before comparison to avoid signal inversion
+        phi_a = self.align_eigenvector_phase(phi_a.copy())
+        phi_b = self.align_eigenvector_phase(phi_b.copy())
+
+        # Normalize each column (mode) to unit length
+        norm_a = np.linalg.norm(phi_a, axis=0)
+        norm_b = np.linalg.norm(phi_b, axis=0)
+
+        phi_a_norm = phi_a / norm_a
+        phi_b_norm = phi_b / norm_b
+
+        # MAC definition for complex vectors:
+        # MAC(i,j) = |(phi_a_i^H @ phi_b_j)|^2 / ( (phi_a_i^H @ phi_a_i) *
+        # (phi_b_j^H @ phi_b_j) )
+        # Since it is normalized, the denominator is 1.0
+        dot_product = np.conjugate(phi_a_norm.T) @ phi_b_norm
+        mac_matrix = np.abs(dot_product) ** 2
+
+        return mac_matrix
+
+    def sort_modes(self, cur_eigvals, cur_eigvecs, prev_eigvals, prev_eigvecs):
+        """Sort modes using frequency as primary key and MAC for crossings.
+
+        This hybrid approach sorts by frequency magnitude first. If a potential
+        crossing or mode jump is detected (via MAC correlation), it reassigns
+        modes to maintain physical continuity.
+
+        :param cur_eigvals: Current step eigenvalues.
+        :param cur_eigvecs: Current step eigenvectors.
+        :param prev_eigvals: Previous step eigenvalues.
+        :param prev_eigvecs: Previous step eigenvectors.
+        :return: Sorted (eigenvalues, eigenvectors).
+        """
+        n_modes = len(cur_eigvals)
+
+        # If it's the first step, sort strictly by frequency magnitude
+        if prev_eigvecs is None or prev_eigvals is None:
+            idx = np.argsort(np.abs(cur_eigvals))
+            return cur_eigvals[idx], cur_eigvecs[:, idx]
+
+        # Step 1: Calculate MAC matrix to identify mode correlations
+        mac = self.calculate_mac_matrix(prev_eigvecs, cur_eigvecs)
+
+        # Step 2: Use frequency proximity as a weight (Optional but powerful)
+        # Considers both shape (MAC) and frequency jump
+        cost_matrix = np.zeros((n_modes, n_modes))
+
+        for i in range(n_modes):  # Previous
+            for j in range(n_modes):  # Current
+                freq_diff = np.abs(
+                    np.imag(cur_eigvals[j]) - np.imag(prev_eigvals[i])
+                )
+                # Cost is lower if MAC is high and frequency jump is small
+                # Normalize freq_diff by the previous frequency
+                rel_freq_diff = freq_diff / (
+                    np.abs(np.imag(prev_eigvals[i])) + 1e-6
+                )
+                cost_matrix[i, j] = (1.0 - mac[i, j]) + 0.5 * rel_freq_diff
+
+        # Step 3: Solve the assignment problem using the combined cost
+        _, assignment = linear_sum_assignment(cost_matrix)
+
+        return cur_eigvals[assignment], cur_eigvecs[:, assignment]
 
     def identify_flutter(self) -> float:
         """Identify flutter onset using a bracket-and-interpolate method.

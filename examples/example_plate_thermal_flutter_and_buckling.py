@@ -101,5 +101,6 @@ def run_examples():
 
 if __name__ == "__main__":
     run_examples()
+    input("Press Enter to exit...")
 
 # %%

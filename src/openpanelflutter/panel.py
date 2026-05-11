@@ -478,7 +478,12 @@ class Panel:
             * self.jac
         )
 
-        # Thermal/Initial Stress matrices placeholders
+        # Symmetrize matrices to mitigate numerical issues
+        # self._M = (self._M.T + self._M) / 2.0
+        # self._K = (self._K.T + self._K) / 2.0
+        # self._C = (self._C.T + self._C) / 2.0
+
+        # Thermal Stress matrices placeholders and spring stiffness matrices
         self._K_sig = np.zeros_like(self._K)
         self._K_spring = np.zeros_like(self._K)
         self._K_theta = np.zeros_like(self._K)
@@ -838,6 +843,9 @@ class Panel:
             * self.jac
         )
 
+        # Symmetrize to mitigate numerical issues
+        # K_sig = (K_sig.T + K_sig) / 2.0
+
         self._K_sig = K_sig
 
     def add_torsional_edge(self, side: str, k_theta: float):
@@ -958,6 +966,9 @@ class Panel:
             * line_jacobian
         )
 
+        # Symmetrize to mitigate numerical issues
+        # k_incremental = (k_incremental.T + k_incremental) / 2.0
+
         # Add to existing torsional stiffness contributions
         self._K_theta += k_incremental
 
@@ -1022,6 +1033,9 @@ class Panel:
 
         # Discrete stiffness contribution: k * {Bw}.T @ {Bw}
         k_discrete = k_spring * (np.transpose(b_w, [0, 2, 1]) @ b_w)
+
+        # Symmetrize to mitigate numerical issues
+        # k_discrete = (k_discrete.T + k_discrete) / 2.0
 
         # Accumulate into the global spring stiffness matrix
         self._K_spring += k_discrete[0, :, :]
