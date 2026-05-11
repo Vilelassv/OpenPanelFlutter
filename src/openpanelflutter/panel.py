@@ -1134,11 +1134,6 @@ class Panel:
         # Solve the generalized eigenvalue problem:
         # [K_str - K_sig] {phi} = -lambda [K_sig] {phi}
         # Note: Using the structural and geometric stiffness matrices directly
-        print(la.issymmetric(self.K_structural), la.issymmetric(self._K_sig))
-        print(
-            (self.K_structural - self.K_structural.T).max(),
-            (self._K_sig - self._K_sig.T).max(),
-        )
         eigvals, eigvecs = la.eig(
             self.K_structural - self._K_sig, -self._K_sig
         )

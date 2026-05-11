@@ -315,7 +315,7 @@ class Analysis:
                 # If using Ackeret, plot the Imaginary part of frequency
                 if hasattr(self, "use_ackeret") and self.use_ackeret:
                     y_data = self.img_omega[:, k]
-                    y_label = r"Im$(\omega^2)$ [Hz]"
+                    y_label = r"Im$(\omega^2)$"
                 else:
                     # Standard damping ratio (zeta)
                     y_data = self.damping_zeta[:, k]
