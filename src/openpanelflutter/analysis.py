@@ -12,7 +12,6 @@ from timeit import default_timer as timer
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.linalg as la
-from scipy.optimize import linear_sum_assignment
 
 from .definitions import apply_plot_style
 from .integrator import Integrator
@@ -120,7 +119,6 @@ class Analysis:
         curvature = 1.0 / self.panel.radius if self.panel.radius > 0.0 else 0.0
 
         phi_ref = None  # Reference mode shapes for tracking across the sweep
-        val_ref = None  # Previous eigenvalues for tracking mode evolution
 
         for i, mach in enumerate(mach_array):
             # Piston Theory Parameters
@@ -149,18 +147,16 @@ class Analysis:
             state_matrix[num_dofs:, num_dofs:] = -m_inv @ c_tot
 
             # Solve complex eigenvalue problem
-            eigvals, eigvecs = la.eig(state_matrix)
-
-            # Extract upper half (displacements) and one of each conjugate pair
-            eigvals = eigvals[::2]
-            mode_shapes = eigvecs[:num_dofs, ::2]
+            eigvals, mode_shapes = self.solve_state_space_eigenvalues(
+                state_matrix, num_dofs
+            )
 
             # Sort by mac to maintain mode tracking across the sweep
             eigvals, mode_shapes = self.sort_modes(
-                eigvals, mode_shapes, val_ref, phi_ref
+                eigvals, mode_shapes, phi_ref
             )
             # Update reference for next iteration
-            phi_ref = mode_shapes
+            phi_ref = mode_shapes.copy()
 
             # Store results
             self.omega_hz[i, :] = np.abs(eigvals) / (2.0 * np.pi)
@@ -174,20 +170,55 @@ class Analysis:
             2.0 * (0.5 * self.rho_air * v_infs**2) / np.sqrt(mach_array**2 - 1)
         )
 
-    def align_eigenvector_phase(self, phi):
-        """Align the phase of eigenvectors to ensure consistency for MAC.
+    def solve_state_space_eigenvalues(self, a_matrix, num_dofs):
+        """Solve the eigenvalue problem for the state-space matrix.
 
-        For each mode, it identifies the element with the largest magnitude
-        and rotates the vector so that this element is real and positive.
+        Filters the results to return only one representative of each
+        complex conjugate pair, prioritizing non-negative imaginary parts
+        to maintain physical frequency information.
 
-        :param phi: Eigenvector matrix (modes in columns).
-        :return: Phase-aligned eigenvector matrix.
+        Args:
+            a_matrix (ndarray): The 2N x 2N state-space plant matrix.
+            num_dofs (int): Number of degrees of freedom (N).
+
+        Returns:
+            tuple: (eigvals, mode_shapes)
+                - eigvals: Filtered eigenvalues of shape (num_dofs,).
+                - mode_shapes: Displacement eigenvectors (num_dofs, num_dofs).
         """
-        for i in range(phi.shape[1]):
-            max_idx = np.argmax(np.abs(phi[:, i]))
-            phase = np.angle(phi[max_idx, i])
-            phi[:, i] *= np.exp(-1j * phase)
-        return phi
+        # Standard eigenvalue solver for the 2N x 2N system
+        eigvals, eigvecs = la.eig(a_matrix)
+
+        # Filter to keep only the upper half of the complex plane (Im >= 0)
+        # A small tolerance handles numerical noise around purely real roots
+        mask = np.imag(eigvals) >= -1e-7
+        eigvals = eigvals[mask]
+        eigvecs = eigvecs[:, mask]
+
+        # Ensure the output size matches num_dofs
+        # If more candidates exist, take the N values with smallest magnitude
+        # only as a baseline for the very first step.
+        if len(eigvals) > num_dofs:
+            idx = np.argsort(np.abs(eigvals))[:num_dofs]
+            eigvals = eigvals[idx]
+            eigvecs = eigvecs[:, idx]
+        elif len(eigvals) < num_dofs:
+            # Padding in case of missing roots to prevent shape mismatch in MAC
+            diff = num_dofs - len(eigvals)
+            eigvals = np.append(eigvals, np.zeros(diff))
+            eigvecs = np.hstack([eigvecs, np.zeros((2 * num_dofs, diff))])
+
+        # Extract the displacement part (first N components)
+        mode_shapes = eigvecs[:num_dofs, :]
+
+        # Phase Normalization: Rotate each eigenvector so its largest component
+        # is purely real. This is CRITICAL for MAC stability in damped systems.
+        for i in range(mode_shapes.shape[1]):
+            max_idx = np.argmax(np.abs(mode_shapes[:, i]))
+            phase = np.angle(mode_shapes[max_idx, i])
+            mode_shapes[:, i] *= np.exp(-1j * phase)
+
+        return eigvals, mode_shapes
 
     def compute_mac_matrix(self, phi_a, phi_b):
         """Calculate the Modal Assurance Criterion between two sets of modes.
@@ -204,10 +235,6 @@ class Analysis:
             numpy.ndarray: MAC matrix where entry (i, j) is the correlation
                 between phi_a[:, i] and phi_b[:, j].
         """
-        # Align phases before comparison to avoid signal inversion
-        phi_a = self.align_eigenvector_phase(phi_a.copy())
-        phi_b = self.align_eigenvector_phase(phi_b.copy())
-
         # Normalize each column (mode) to unit length
         norm_a = np.linalg.norm(phi_a, axis=0)
         norm_b = np.linalg.norm(phi_b, axis=0)
@@ -224,49 +251,47 @@ class Analysis:
 
         return mac_matrix
 
-    def sort_modes(self, cur_eigvals, cur_eigvecs, prev_eigvals, prev_eigvecs):
+    def sort_modes(self, cur_eigvals, cur_eigvecs, prev_eigvecs):
         """Sort modes using frequency as primary key and MAC for crossings.
 
         This hybrid approach sorts by frequency magnitude first. If a potential
         crossing or mode jump is detected (via MAC correlation), it reassigns
         modes to maintain physical continuity.
 
-        :param cur_eigvals: Current step eigenvalues.
-        :param cur_eigvecs: Current step eigenvectors.
-        :param prev_eigvals: Previous step eigenvalues.
-        :param prev_eigvecs: Previous step eigenvectors.
-        :return: Sorted (eigenvalues, eigenvectors).
-        """
-        n_modes = len(cur_eigvals)
+        Args:
+            cur_eigvals: Current step eigenvalues.
+            cur_eigvecs: Current step eigenvectors.
+            prev_eigvecs: Previous step eigenvectors.
 
-        # If it's the first step, sort strictly by frequency magnitude
-        if prev_eigvecs is None or prev_eigvals is None:
+        Returns:
+            Sorted (eigenvalues, eigenvectors).
+        """
+        # Initial step: sort strictly by frequency magnitude
+        if prev_eigvecs is None:
             idx = np.argsort(np.abs(cur_eigvals))
             return cur_eigvals[idx], cur_eigvecs[:, idx]
 
-        # Step 1: Calculate MAC matrix to identify mode correlations
-        mac = self.calculate_mac_matrix(prev_eigvecs, cur_eigvecs)
+        # Calculate correlation between previous and current modes
+        mac = self.compute_mac_matrix(prev_eigvecs, cur_eigvecs)
 
-        # Step 2: Use frequency proximity as a weight (Optional but powerful)
-        # Considers both shape (MAC) and frequency jump
-        cost_matrix = np.zeros((n_modes, n_modes))
+        n_modes = cur_eigvals.shape[0]
+        matched_indices = np.zeros(n_modes, dtype=int)
+        temp_mac = mac.copy()
 
-        for i in range(n_modes):  # Previous
-            for j in range(n_modes):  # Current
-                freq_diff = np.abs(
-                    np.imag(cur_eigvals[j]) - np.imag(prev_eigvals[i])
-                )
-                # Cost is lower if MAC is high and frequency jump is small
-                # Normalize freq_diff by the previous frequency
-                rel_freq_diff = freq_diff / (
-                    np.abs(np.imag(prev_eigvals[i])) + 1e-6
-                )
-                cost_matrix[i, j] = (1.0 - mac[i, j]) + 0.5 * rel_freq_diff
+        # Greedy assignment: find the best unique match for each previous mode
+        for nn in range(n_modes):
+            # Find the current mode with highest correlation to previous one
+            idx_match = np.argmax(temp_mac[nn, :])
+            matched_indices[nn] = idx_match
 
-        # Step 3: Solve the assignment problem using the combined cost
-        _, assignment = linear_sum_assignment(cost_matrix)
+            # Zero the column to ensure this current mode isn't picked again
+            temp_mac[:, idx_match] = -1.0
 
-        return cur_eigvals[assignment], cur_eigvecs[:, assignment]
+        # Reorder eigenvalues and eigenvectors based on the tracking results
+        sorted_eigvals = cur_eigvals[matched_indices]
+        sorted_modes = cur_eigvecs[:, matched_indices]
+
+        return sorted_eigvals, sorted_modes
 
     def identify_flutter(self) -> float:
         """Identify flutter onset using a bracket-and-interpolate method.

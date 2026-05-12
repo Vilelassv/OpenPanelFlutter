@@ -82,11 +82,7 @@ class Stiffener:
         self.izz_s = (self.height * self.width**3) / 12.0
         self.inn_s = (self.width * self.height**3) / 12.0
         self.j0_s = self.izz_s + self.inn_s
-        self.j_s = (
-            (self.height * self.width**3)
-            / 3.0
-            * (1.0 - 0.63 * (self.width / self.height))
-        )
+        self.j_s = (self.height * self.width**3) / 3.0
 
         self.panel = panel
         self._eval_matrices()
@@ -281,7 +277,7 @@ class Stiffener:
             (b1_ee * dedy + b1_en * dndy) * dedy
             + (b1_en * dedy + b1_nn * dndy) * dndy
         )
-        up_xy = t_skew @ (b1_ee * dedx + b1_en * dedy) * dedx
+        up_xy = t_skew @ (b1_ee * dedy + b1_en * dndy) * dedx
 
         # Transformation to stiffener local system (t, n, z)
         self.ust = self.t_st @ up
@@ -374,7 +370,8 @@ class Stiffener:
                 nu = self.laminate.plies[0].material.nu
                 g = e / (2 * (1 + nu))
                 k11, k22 = e * self.area, e * self.izz_s
-                k33, k44 = e * self.inn_s, g * self.j_s
+                k33, k44 = e * self.inn_s, g * self.j0_s
+                print(self.j0_s, self.j_s)
 
                 self.c0 = np.diag([k11, k22, k33, k44])
                 self._TKu = mat_select(4, 5, [], [])
@@ -426,10 +423,6 @@ class Stiffener:
         if self.panel.theory == StructuralTheory.KIRCHHOFF:
             self._M = self._M[: len_u + len_v + len_w, : len_u + len_v + len_w]
             self._K = self._K[: len_u + len_v + len_w, : len_u + len_v + len_w]
-
-        # Symmetrize matrices to mitigate numerical issues
-        # self._M = (self._M.T + self._M) / 2.0
-        # self._K = (self._K.T + self._K) / 2.0
 
     def init_nlin(self, panel):
         """Initialize nonlinear matrix components for large deflections.

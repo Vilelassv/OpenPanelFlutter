@@ -33,12 +33,14 @@ FIG_RATIO = 0.65
 FIGHEIGHT = FIGWIDTH * FIG_RATIO
 
 
-def question_01():
-    """Function to run the first question of the list."""
+def question_01(nfunc: int):
+    """Function to run the first question of the list.
+
+    Args:
+        nfunc (int): Number of basis functions in each direction
+    """
     #                     rho,    E,  nu
     AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
-    # setup de simulacao
-    n_func = 4
 
     laminado = Laminate("Aluminio")
     laminado.add_stack(AL, 1e-3)
@@ -46,17 +48,17 @@ def question_01():
     #                a,   b
     painel = Panel(0.3, 0.25, laminate=laminado)
     painel.setup_kinematics(
-        n_func,
+        nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
         n_gauss=30,
     )
 
-    # Adicionando as molas torcionais
+    # Adding torsional edges
     painel.add_torsional_edge("left", 1e2)
     painel.add_torsional_edge("right", 1e2)
 
-    # Adicionando mola linear
+    # Adding linear spring at the center of the panel
     painel.add_linear_spring([0, 0], 5)
 
     painel.compute_free_modes()
@@ -66,7 +68,7 @@ def question_01():
 
     painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
 
-    # Iniciando as analises
+    # Initializing the analysis class with the panel
     analyses = Analysis(painel)
 
     analyses.set_atmosphere(1e4)
@@ -108,12 +110,15 @@ def question_01():
     print(f"Critical Buckling Temperature (DeltaTc): {t_critical:.2f} oC")
 
 
-def question_02():
-    """Function to run the second question of the list."""
+def question_02(nfunc: int):
+    """Function to run the second question of the list.
+
+    Args:
+        nfunc (int): Number of basis functions in each direction
+    """
     #                     rho,    E,  nu
     AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
     # setup de simulacao
-    n_func = 4
 
     laminado = Laminate("Aluminio")
     laminado.add_stack(AL, 5e-4)
@@ -121,7 +126,7 @@ def question_02():
     #                a,   b
     painel = Panel(0.3, 0.2, laminado, radius=1.0)
     painel.setup_kinematics(
-        n_func,
+        nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
         n_gauss=30,
@@ -132,7 +137,7 @@ def question_02():
     omega_H = painel.free_omega_hz[3] * 2 * np.pi
 
     painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
-    """
+
     base = Laminate("Base")
     base.add_stack(AL, 30e-3)
 
@@ -160,7 +165,6 @@ def question_02():
         gap=1e-3,
         side=-1,
     )
-    """
 
     painel.compute_free_modes()
     painel.plot_free_modes(n_modes=4)
@@ -186,12 +190,11 @@ def question_02():
 
 if __name__ == "__main__":
     # Question 01
-    question_01()
+    # question_01(nfunc=4)
 
     # Question 02
-    # question_02()
+    question_02(nfunc=6)
 
-    input("Press Enter to finish...")
-
+    # input("Press Enter to finish...")
 
 # %%
