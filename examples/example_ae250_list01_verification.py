@@ -110,11 +110,13 @@ def question_01(nfunc: int):
     print(f"Critical Buckling Temperature (DeltaTc): {t_critical:.2f} oC")
 
 
-def question_02(nfunc: int):
+def question_02a(nfunc: int, Hs: list, thetas: list):
     """Function to run the second question of the list.
 
     Args:
         nfunc (int): Number of basis functions in each direction
+        Hs (list): List of stiffener heights
+        thetas (list): List of angles
     """
     #                     rho,    E,  nu
     AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
@@ -132,11 +134,129 @@ def question_02(nfunc: int):
         n_gauss=30,
     )
 
-    painel.compute_free_modes()
-    omega_L = painel.free_omega_hz[0] * 2 * np.pi
-    omega_H = painel.free_omega_hz[3] * 2 * np.pi
+    base = Laminate("Base")
+    base.add_stack(AL, 30e-3)
 
-    painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
+    flange = Laminate("Flange")
+    flange.add_stack(AL, 1e-3)
+
+    vfluter = np.zeros(shape=(len(Hs), len(thetas)))
+
+    for kh, h in enumerate(Hs):
+        for kt, theta in enumerate(thetas):
+            painel.remove_stiffeners()
+
+            painel.insert_stiffener(
+                x0=0.0,
+                y0=0.15,
+                x1=0.3,
+                y1=0.15,
+                height=1e-3,
+                laminate=base,
+                gap=h,
+                side=-1,
+            )
+
+            painel.insert_stiffener(
+                x0=0.0,
+                y0=0.15,
+                x1=0.3,
+                y1=0.15,
+                height=20e-3,
+                laminate=flange,
+                gap=h + 1e-3,
+                side=-1,
+            )
+
+            if h > 0.0:
+                pad = Laminate("Pad")
+                pad.add_stack(AL, 30e-3 + h * np.cos(np.radians(theta)))
+                painel.insert_stiffener(
+                    x0=0.0,
+                    y0=0.15,
+                    x1=0.3,
+                    y1=0.15,
+                    height=h,
+                    laminate=pad,
+                    gap=0.0,
+                    side=-1,
+                )
+
+            painel.compute_free_modes()
+            omega_L = painel.free_omega_hz[0] * 2 * np.pi
+            omega_H = painel.free_omega_hz[3] * 2 * np.pi
+            painel.compute_rayleigh_damping(
+                omega_low=omega_L, omega_high=omega_H
+            )
+
+            analyses = Analysis(painel)
+
+            analyses.set_atmosphere(1e4)
+
+            analyses.run_flutter_sweep(
+                mach_max=10, n_points=500, n_modes_save=4
+            )
+            analyses.identify_flutter()
+
+            vfluter[kh, kt] = analyses.v_inf_cr_interp
+
+    plt.figure(figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
+    for kh, h in enumerate(Hs):
+        if h > 0.0:
+            plt.plot(
+                thetas,
+                vfluter[kh, :],
+                "--ok",
+                markersize=3.5,
+                label=f"H = {h * 1e3:.1f} mm",
+            )
+    plt.gca().grid(visible=True, which="both", linestyle=":", linewidth=0.5)
+    plt.xticks(thetas)
+    plt.legend(
+        loc="best",
+        facecolor="white",
+        framealpha=1,
+        handlelength=1.7,
+        markerscale=1,
+    )
+    plt.ylabel("Flutter Velocity $[m/s]$", fontsize=10)
+    plt.xlabel(r"$\theta$ $[{}^\circ]$", fontsize=10)
+    plt.show(block=False)
+
+    """
+    t_critical = painel.run_thermal_buckling(
+        distribution=BasisFunction.SINES
+    )
+
+    painel.compute_thermal_stiffness(
+        delta_t=0.4, distribution=BasisFunction.SINES
+    )
+    """
+
+
+def question_02b(nfunc: int):
+    """Function to run the second question of the list.
+
+    Args:
+        nfunc (int): Number of basis functions in each direction
+        Hs (list): List of stiffener heights
+        thetas (list): List of angles
+    """
+    #                     rho,    E,  nu
+    AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
+    # setup de simulacao
+
+    laminado = Laminate("Aluminio")
+    laminado.add_stack(AL, 5e-4)
+
+    #                a,   b
+    painel = Panel(0.3, 0.2, laminado, radius=1.0)
+    painel.setup_kinematics(
+        nfunc,
+        theory=StructuralTheory.KIRCHHOFF,
+        basis_type=BasisFunction.SINES,
+        n_gauss=30,
+    )
 
     base = Laminate("Base")
     base.add_stack(AL, 30e-3)
@@ -168,16 +288,15 @@ def question_02(nfunc: int):
 
     painel.compute_free_modes()
     painel.plot_free_modes(n_modes=4)
+    omega_L = painel.free_omega_hz[0] * 2 * np.pi
+    omega_H = painel.free_omega_hz[3] * 2 * np.pi
+    painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
 
-    """
-    t_critical = painel.run_thermal_buckling(
-        distribution=BasisFunction.SINES
-    )
+    painel.run_thermal_buckling(distribution=BasisFunction.SINES)
 
     painel.compute_thermal_stiffness(
         delta_t=0.4, distribution=BasisFunction.SINES
     )
-    """
 
     analyses = Analysis(painel)
 
@@ -193,8 +312,12 @@ if __name__ == "__main__":
     # question_01(nfunc=4)
 
     # Question 02
-    question_02(nfunc=6)
+    # Hs = [0.0, 5e-3, 10e-3, 15e-3]
+    # thetas = [60.0, 70.0, 80.0]
+    # question_02a(nfunc=6, Hs=Hs, thetas=thetas)
 
-    # input("Press Enter to finish...")
+    question_02b(nfunc=6)
+
+    input("Press Enter to finish...")
 
 # %%

@@ -1195,7 +1195,7 @@ class Panel:
             ax.set_box_aspect((1, self.b / self.a, 0.3))
             ax.set_axis_off()
 
-            plt.show()
+            plt.show(block=False)
 
         return dt_cr
 

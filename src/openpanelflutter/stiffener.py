@@ -82,7 +82,12 @@ class Stiffener:
         self.izz_s = (self.height * self.width**3) / 12.0
         self.inn_s = (self.width * self.height**3) / 12.0
         self.j0_s = self.izz_s + self.inn_s
-        self.j_s = (self.height * self.width**3) / 3.0
+
+        a = min(self.height, self.width)
+        b = max(self.height, self.width)
+        self.j_s = a**3 * b / 3.0  # * (
+        #    1 - 0.63 * (a / b) + 0.052 * (a / b) ** 5
+        # )
 
         self.panel = panel
         self._eval_matrices()
@@ -370,8 +375,7 @@ class Stiffener:
                 nu = self.laminate.plies[0].material.nu
                 g = e / (2 * (1 + nu))
                 k11, k22 = e * self.area, e * self.izz_s
-                k33, k44 = e * self.inn_s, g * self.j0_s
-                print(self.j0_s, self.j_s)
+                k33, k44 = e * self.inn_s, g * self.j_s
 
                 self.c0 = np.diag([k11, k22, k33, k44])
                 self._TKu = mat_select(4, 5, [], [])
