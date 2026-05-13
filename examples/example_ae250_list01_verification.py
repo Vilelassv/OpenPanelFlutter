@@ -170,7 +170,7 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
 
             if h > 0.0:
                 pad = Laminate("Pad")
-                pad.add_stack(AL, 30e-3 + h * np.cos(np.radians(theta)))
+                pad.add_stack(AL, 30e-3 + h / np.tan(np.radians(theta)))
                 painel.insert_stiffener(
                     x0=0.0,
                     y0=0.15,
@@ -200,16 +200,23 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
 
             vfluter[kh, kt] = analyses.v_inf_cr_interp
 
+    colors = [
+        "--ob",
+        "--pr",
+        "--sk",
+        "--dm",
+        "--Py",
+    ]
+
     plt.figure(figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
     for kh, h in enumerate(Hs):
-        if h > 0.0:
-            plt.plot(
-                thetas,
-                vfluter[kh, :],
-                "--ok",
-                markersize=3.5,
-                label=f"H = {h * 1e3:.1f} mm",
-            )
+        plt.plot(
+            thetas,
+            vfluter[kh, :],
+            colors[kh],
+            markersize=3.5,
+            label=f"H = {h * 1e3:.1f} mm",
+        )
     plt.gca().grid(visible=True, which="both", linestyle=":", linewidth=0.5)
     plt.xticks(thetas)
     plt.legend(
@@ -222,16 +229,6 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
     plt.ylabel("Flutter Velocity $[m/s]$", fontsize=10)
     plt.xlabel(r"$\theta$ $[{}^\circ]$", fontsize=10)
     plt.show(block=False)
-
-    """
-    t_critical = painel.run_thermal_buckling(
-        distribution=BasisFunction.SINES
-    )
-
-    painel.compute_thermal_stiffness(
-        delta_t=0.4, distribution=BasisFunction.SINES
-    )
-    """
 
 
 def question_02b(nfunc: int):
@@ -298,13 +295,13 @@ def question_02b(nfunc: int):
         delta_t=0.4, distribution=BasisFunction.SINES
     )
 
-    analyses = Analysis(painel)
+    # analyses = Analysis(painel)
 
-    analyses.set_atmosphere(1e4)
+    # analyses.set_atmosphere(1e4)
 
-    analyses.run_flutter_sweep(mach_max=10, n_points=500, n_modes_save=4)
-    analyses.identify_flutter()
-    analyses.plot_flutter_curves()
+    # analyses.run_flutter_sweep(mach_max=10, n_points=500, n_modes_save=4)
+    # analyses.identify_flutter()
+    # analyses.plot_flutter_curves()
 
 
 if __name__ == "__main__":
@@ -312,11 +309,11 @@ if __name__ == "__main__":
     # question_01(nfunc=4)
 
     # Question 02
-    # Hs = [0.0, 5e-3, 10e-3, 15e-3]
-    # thetas = [60.0, 70.0, 80.0]
+    # Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0]) * 5e-4
+    # thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
     # question_02a(nfunc=6, Hs=Hs, thetas=thetas)
 
-    question_02b(nfunc=6)
+    question_02b(nfunc=10)
 
     input("Press Enter to finish...")
 

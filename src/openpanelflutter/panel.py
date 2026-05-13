@@ -506,6 +506,10 @@ class Panel:
                 ]
             )
 
+        # Ensure symmetry of the stiffness and mass matrices
+        self._K = (self._K.T + self._K) / 2.0
+        self._M = (self._M.T + self._M) / 2.0
+
         # Re-evaluate Torsional Edge Springs
         for side, k_val in self.torsional_springs.items():
             if k_val > 0:
@@ -912,6 +916,8 @@ class Panel:
             zeros = np.zeros_like(theta)
             b_theta = np.block(
                 [
+                    [zeros, zeros, zeros],
+                    [zeros, zeros, zeros],
                     [zeros, zeros, theta],
                 ]
             )
@@ -957,6 +963,9 @@ class Panel:
             )
             * line_jacobian
         )
+
+        # Ensure symmetry of the incremental stiffness contribution
+        k_incremental = (k_incremental + k_incremental.T) / 2.0
 
         # Add to existing torsional stiffness contributions
         self._K_theta += k_incremental
@@ -1023,8 +1032,12 @@ class Panel:
         # Discrete stiffness contribution: k * {Bw}.T @ {Bw}
         k_discrete = k_spring * (np.transpose(b_w, [0, 2, 1]) @ b_w)
 
+        # Ensure symmetry of the discrete stiffness contribution
+        k_discrete = k_discrete[0, :, :]
+        k_discrete = (k_discrete.T + k_discrete) / 2.0
+
         # Accumulate into the global spring stiffness matrix
-        self._K_spring += k_discrete[0, :, :]
+        self._K_spring += k_discrete
 
     def remove_point_springs(self, coords: tuple = None):
         """Remove a specific point spring by coordinates or all of them.

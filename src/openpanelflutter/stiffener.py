@@ -85,9 +85,7 @@ class Stiffener:
 
         a = min(self.height, self.width)
         b = max(self.height, self.width)
-        self.j_s = a**3 * b / 3.0  # * (
-        #    1 - 0.63 * (a / b) + 0.052 * (a / b) ** 5
-        # )
+        self.j_s = a**3 * b / 3.0 * (1 - 0.63 * (a / b) + 0.052 * (a / b) ** 5)
 
         self.panel = panel
         self._eval_matrices()
@@ -427,6 +425,10 @@ class Stiffener:
         if self.panel.theory == StructuralTheory.KIRCHHOFF:
             self._M = self._M[: len_u + len_v + len_w, : len_u + len_v + len_w]
             self._K = self._K[: len_u + len_v + len_w, : len_u + len_v + len_w]
+
+        # Ensure symmetry of the stiffness and mass matrices
+        self._K = (self._K.T + self._K) / 2.0
+        self._M = (self._M.T + self._M) / 2.0
 
     def init_nlin(self, panel):
         """Initialize nonlinear matrix components for large deflections.
