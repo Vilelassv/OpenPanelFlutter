@@ -289,11 +289,11 @@ def question_02b(nfunc: int):
     omega_H = painel.free_omega_hz[3] * 2 * np.pi
     painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
 
-    painel.run_thermal_buckling(distribution=BasisFunction.SINES)
+    # painel.run_thermal_buckling(distribution=BasisFunction.SINES)
 
-    painel.compute_thermal_stiffness(
-        delta_t=0.4, distribution=BasisFunction.SINES
-    )
+    # painel.compute_thermal_stiffness(
+    #    delta_t=0.4, distribution=BasisFunction.SINES
+    # )
 
     # analyses = Analysis(painel)
 
@@ -310,7 +310,7 @@ if __name__ == "__main__":
 
     # Question 02
     # Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0]) * 5e-4
-    # thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
+    # thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 85.0])
     # question_02a(nfunc=6, Hs=Hs, thetas=thetas)
 
     question_02b(nfunc=10)

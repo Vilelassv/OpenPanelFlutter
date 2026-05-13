@@ -80,7 +80,7 @@ class Stiffener:
         # Cross-section properties (rectangular)
         self.area = self.height * self.width
         self.izz_s = (self.height * self.width**3) / 12.0
-        self.inn_s = (self.width * self.height**3) / 12.0
+        self.inn_s = self.width * self.height**3 / 12.0
         self.j0_s = self.izz_s + self.inn_s
 
         a = min(self.height, self.width)
@@ -368,6 +368,36 @@ class Stiffener:
 
         # Constitutive matrix for Euler-Bernoulli Beam
         elif self.theory == StructuralTheory.EULER_BERNOULLI:
+            len_u, len_v, len_w = (
+                len(self.base_u),
+                len(self.base_v),
+                len(self.base_w),
+            )
+            len_bx, len_by = len(self.base_w), len(self.base_w)
+            idxw = slice(len_u + len_v, len_u + len_v + len_w)
+            idxbx = slice(
+                len_u + len_v + len_w, len_u + len_v + len_w + len_bx
+            )
+            idxby = slice(
+                len_u + len_v + len_w + len_bx,
+                len_u + len_v + len_w + len_bx + len_by,
+            )
+
+            def reduce_to_kirchhoff(ust_full):
+                """Reduce Kirchhoff-Love DOFs."""
+                # Only u, v, w are retained for Kirchhoff-Love theory
+                ust_full[:, :, idxw] += ust_full[:, :, idxbx]
+                ust_full[:, :, idxw] += ust_full[:, :, idxby]
+                return ust_full[:, :3, : len_u + len_v + len_w]
+
+            # For Kirchhoff-Love theory, only u, v and w.
+            self.ust = reduce_to_kirchhoff(self.ust)
+            self.ust_t = reduce_to_kirchhoff(self.ust_t)
+            self.ust_n = reduce_to_kirchhoff(self.ust_n)
+            self.ust_tt = reduce_to_kirchhoff(self.ust_tt)
+            self.ust_nn = reduce_to_kirchhoff(self.ust_nn)
+            self.ust_nt = reduce_to_kirchhoff(self.ust_nt)
+
             if isotropic:
                 e = self.laminate.plies[0].material.E
                 nu = self.laminate.plies[0].material.nu
@@ -376,19 +406,19 @@ class Stiffener:
                 k33, k44 = e * self.inn_s, g * self.j_s
 
                 self.c0 = np.diag([k11, k22, k33, k44])
-                self._TKu = mat_select(4, 5, [], [])
-                self._TKu_t = mat_select(4, 5, [0], [0])
-                self._TKu_tt = mat_select(4, 5, [1, 2], [1, 2])
-                self._TKu_nt = mat_select(4, 5, [3], [2])
+                self._TKu = mat_select(4, 3, [], [])
+                self._TKu_t = mat_select(4, 3, [0], [0])
+                self._TKu_tt = mat_select(4, 3, [1, 2], [1, 2])
+                self._TKu_nt = mat_select(4, 3, [3], [2])
 
             rho = self.laminate.plies[0].material.rho
             m11 = m22 = m33 = rho * self.area
             m44, m55 = rho * self.inn_s, rho * self.j0_s
             self.i0 = np.diag([m11, m22, m33, m44, m55])
 
-            self._TMu = mat_select(5, 5, [0, 1, 2], [0, 1, 2])
-            self._TMu_t = mat_select(5, 5, [3], [2])
-            self._TMu_n = mat_select(5, 5, [4], [2])
+            self._TMu = mat_select(5, 3, [0, 1, 2], [0, 1, 2])
+            self._TMu_t = mat_select(5, 3, [3], [2])
+            self._TMu_n = mat_select(5, 3, [4], [2])
 
         # Integrate and assemble global matrices
         aux_k = (
@@ -397,6 +427,8 @@ class Stiffener:
             + self._TKu_nt @ self.ust_nt
             + self._TKu_tt @ self.ust_tt
         )
+        print(self._TKu_t @ self.ust_t[0, :, :])
+        print("aoba")
         aux_kt = np.transpose(aux_k, [0, 2, 1])
 
         aux_m = (
@@ -414,17 +446,6 @@ class Stiffener:
             np.tensordot(self.wi_stf, aux_mt @ self.i0 @ aux_m, [0, 0])
             * self.jac
         )
-
-        len_u, len_v, len_w = (
-            len(self.base_u),
-            len(self.base_v),
-            len(self.base_w),
-        )
-
-        # Compatibility with panel theory (only u, v and w for Kirchhoff)
-        if self.panel.theory == StructuralTheory.KIRCHHOFF:
-            self._M = self._M[: len_u + len_v + len_w, : len_u + len_v + len_w]
-            self._K = self._K[: len_u + len_v + len_w, : len_u + len_v + len_w]
 
         # Ensure symmetry of the stiffness and mass matrices
         self._K = (self._K.T + self._K) / 2.0

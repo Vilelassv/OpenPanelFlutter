@@ -532,7 +532,7 @@ class Panel:
         m_total = self.M_global
 
         # Generalized eigenvalue problem
-        eigvals, eigvecs = la.eig(k_total, m_total)
+        eigvals, eigvecs = la.eigh(k_total, m_total)
 
         # Natural frequencies in rad/s
         omega_rad = np.real(np.sqrt(eigvals))
@@ -841,6 +841,9 @@ class Panel:
             )
             * self.jac
         )
+
+        # Ensure symmetry
+        K_sig = (K_sig + K_sig.T) / 2.0
 
         self._K_sig = K_sig
 
