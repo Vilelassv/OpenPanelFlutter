@@ -58,6 +58,7 @@ class Stiffener:
         # Width is derived from the laminate total thickness
         self.laminate = laminate
         self.width = laminate.total_thickness
+        self.laminate.compute_ABD()
 
         # Derived geometric attributes
         self.length = np.sqrt((x1 - x0) ** 2 + (y1 - y0) ** 2)
@@ -366,6 +367,8 @@ class Stiffener:
             self._TMu_t = mat_select(5, 5, [], [])
             self._TMu_n = mat_select(5, 5, [], [])
 
+            self._Talpha = mat_select(5, 5, [0], [0])
+
         # Constitutive matrix for Euler-Bernoulli Beam
         elif self.theory == StructuralTheory.EULER_BERNOULLI:
             len_u, len_v, len_w = (
@@ -421,6 +424,9 @@ class Stiffener:
             self._TMu_t = mat_select(6, 3, [3, 4], [1, 2])
             self._TMu_n = mat_select(6, 3, [5], [2])
 
+            self._TFu_t = mat_select(3, 3, [0], [0])
+            self._Talpha = mat_select(3, 3, [0], [0])
+
         # Integrate and assemble global matrices
         aux_k = (
             self._TKu @ self.ust
@@ -449,6 +455,15 @@ class Stiffener:
         # Ensure symmetry of the stiffness and mass matrices
         self._K = (self._K.T + self._K) / 2.0
         self._M = (self._M.T + self._M) / 2.0
+
+        aux_f = self._TFu_t @ self.ust_t
+        aux_ft = np.transpose(aux_f, [0, 2, 1])
+
+        # Sitiffener thermal contribution
+        # Variable to be integrated over line, depending on temperature field
+        self.F_tilde = (
+            aux_ft @ self._Talpha @ (self.laminate.N_R * self.height)
+        )
 
     def init_nlin(self, panel):
         """Initialize nonlinear matrix components for large deflections.

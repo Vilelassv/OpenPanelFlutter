@@ -784,6 +784,7 @@ class Panel:
         if distribution == "cte":
             nr_aux = self.laminate.N_R * delta_t
             mr_aux = self.laminate.M_R * delta_t
+            nt_scaled = delta_t
         else:
             # Spatial distribution based on predifined function
             xys = self.mesh[:, [0, 1]]
@@ -811,6 +812,27 @@ class Panel:
             * self.jac
         )
 
+        # Compute stiffeners equivalent thermal force vector (F_tilde)
+        for stf in self.stiffeners:
+            xys_stf = stf.mesh[:, [0, 1]]
+            if distribution == "cte":
+                dt_stf = delta_t
+            else:
+                dt_stf = Function.evaluate_basis_product(
+                    [[1, 1]], xys_stf, distribution, "vfunc", "vfunc"
+                )[:, 0, 0]
+
+                dt_stf = dt_stf * delta_t
+            f_tilde += (
+                np.tensordot(stf.wi_stf * dt_stf, stf.F_tilde, [0, 0])
+                * self.jac
+            )
+
+            print(
+                np.tensordot(stf.wi_stf * dt_stf, stf.F_tilde, [0, 0])
+                * self.jac
+            )
+
         # Solve for equivalent displacements using Cholesky decomposition
         c_factor = la.cho_factor(self.K_structural)
         q_t = la.cho_solve(c_factor, f_tilde)
@@ -831,6 +853,43 @@ class Panel:
         n_tensor[:, [0], [1]] = n_eff[:, [2], [0]]  # Nxy
         n_tensor[:, [1], [0]] = n_eff[:, [2], [0]]  # Nxy
         n_tensor[:, [1], [1]] = n_eff[:, [1], [0]]  # Ny
+
+        # Assemble Geometric Stiffness Matrix: Integral(BT.T * NT * BT)
+        K_sig = (
+            np.tensordot(
+                weights,
+                np.transpose(self.bt, [0, 2, 1]) @ n_tensor @ self.bt,
+                [0, 0],
+            )
+            * self.jac
+        )
+
+        # Ensure symmetry
+        K_sig = (K_sig + K_sig.T) / 2.0
+
+        self._K_sig = K_sig
+
+    def compute_stiffness_given_pre_stress(self, N):
+        """Compute stiffness matrix for a given pre-stress state.
+
+        This method evaluates incremental stiffness matrix K_sig for a given
+        pre-stress state.
+
+        Args:
+            N (ndarray): given pre-stress: np.array([Nx, Ny, Nxy]) in N/m.
+        """
+        # Re-evaluate mesh for non-linear integration (nlin=1)
+        self._initialize_quadrature(nlin=1)
+        weights = self.mesh[:, -1]
+
+        # Reset thermal stiffness to allocate the present stiffeness
+        self._K_sig = np.zeros((self.len_tot, self.len_tot))
+
+        n_tensor = np.zeros((len(self.mesh), 2, 2))
+        n_tensor[:, [0], [0]] = N[0]  # Nx
+        n_tensor[:, [0], [1]] = N[2]  # Nxy
+        n_tensor[:, [1], [0]] = N[2]  # Nxy
+        n_tensor[:, [1], [1]] = N[1]  # Ny
 
         # Assemble Geometric Stiffness Matrix: Integral(BT.T * NT * BT)
         K_sig = (

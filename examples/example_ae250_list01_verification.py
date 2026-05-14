@@ -42,12 +42,12 @@ def question_01(nfunc: int):
     #                     rho,    E,  nu
     AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
 
-    laminado = Laminate("Aluminio")
-    laminado.add_stack(AL, 1e-3)
+    laminate = Laminate("Aluminio")
+    laminate.add_stack(AL, 1e-3)
 
     #                a,   b
-    painel = Panel(0.3, 0.25, laminate=laminado)
-    painel.setup_kinematics(
+    panel = Panel(0.3, 0.25, laminate=laminate)
+    panel.setup_kinematics(
         nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
@@ -55,21 +55,21 @@ def question_01(nfunc: int):
     )
 
     # Adding torsional edges
-    painel.add_torsional_edge("left", 1e2)
-    painel.add_torsional_edge("right", 1e2)
+    panel.add_torsional_edge("left", 1e2)
+    panel.add_torsional_edge("right", 1e2)
 
     # Adding linear spring at the center of the panel
-    painel.add_linear_spring([0, 0], 5)
+    panel.add_linear_spring([0, 0], 5)
 
-    painel.compute_free_modes()
-    painel.plot_free_modes(n_modes=4)
-    omega_L = painel.free_omega_hz[0] * 2 * np.pi
-    omega_H = painel.free_omega_hz[3] * 2 * np.pi
+    panel.compute_free_modes()
+    panel.plot_free_modes(n_modes=4)
+    omega_L = panel.free_omega_hz[0] * 2 * np.pi
+    omega_H = panel.free_omega_hz[3] * 2 * np.pi
 
-    painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
+    panel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
 
     # Initializing the analysis class with the panel
-    analyses = Analysis(painel)
+    analyses = Analysis(panel)
 
     analyses.set_atmosphere(1e4)
 
@@ -105,7 +105,19 @@ def question_01(nfunc: int):
     plt.xlabel(r"$\theta$ $[{}^\circ]$", fontsize=10)
     plt.show(block=False)
 
-    t_critical = painel.run_thermal_buckling()
+    N = np.array([-837, 0, 0])
+    panel.compute_stiffness_given_pre_stress(N)
+    analyses.run_flutter_sweep(n_points=500, n_modes_save=4)
+    analyses.identify_flutter()
+    analyses.plot_flutter_curves()
+
+    print(
+        f"Nx = {N[0]:.2f} N/m, Ny = {N[1]:.2f} N/m, Nxy = {N[2]:.2f} N/m, "
+        + f"Flutter: \t{np.round(analyses.v_inf_cr_interp, 2)} m/s"
+    )
+    print("")
+
+    t_critical = panel.run_thermal_buckling()
 
     print(f"Critical Buckling Temperature (DeltaTc): {t_critical:.2f} oC")
 
@@ -120,14 +132,14 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
     """
     #                     rho,    E,  nu
     AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
-    # setup de simulacao
+    # simulation
 
-    laminado = Laminate("Aluminio")
-    laminado.add_stack(AL, 5e-4)
+    laminate = Laminate("Aluminio")
+    laminate.add_stack(AL, 5e-4)
 
     #                a,   b
-    painel = Panel(0.3, 0.2, laminado, radius=1.0)
-    painel.setup_kinematics(
+    panel = Panel(0.3, 0.2, laminate, radius=1.0)
+    panel.setup_kinematics(
         nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
@@ -143,10 +155,11 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
     vfluter = np.zeros(shape=(len(Hs), len(thetas)))
 
     for kh, h in enumerate(Hs):
+        h = h * panel.laminate.total_thickness
         for kt, theta in enumerate(thetas):
-            painel.remove_stiffeners()
+            panel.remove_stiffeners()
 
-            painel.insert_stiffener(
+            panel.insert_stiffener(
                 x0=0.0,
                 y0=0.15,
                 x1=0.3,
@@ -157,7 +170,7 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
                 side=-1,
             )
 
-            painel.insert_stiffener(
+            panel.insert_stiffener(
                 x0=0.0,
                 y0=0.15,
                 x1=0.3,
@@ -170,8 +183,11 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
 
             if h > 0.0:
                 pad = Laminate("Pad")
-                pad.add_stack(AL, 30e-3 + h / np.tan(np.radians(theta)))
-                painel.insert_stiffener(
+                # Ensure increase is zero for theta 90 degrees
+                d_h = 0.0 if theta == 90.0 else h / np.tan(np.radians(theta))
+                print(h, theta, d_h)
+                pad.add_stack(AL, 30e-3 + d_h)
+                panel.insert_stiffener(
                     x0=0.0,
                     y0=0.15,
                     x1=0.3,
@@ -182,14 +198,14 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
                     side=-1,
                 )
 
-            painel.compute_free_modes()
-            omega_L = painel.free_omega_hz[0] * 2 * np.pi
-            omega_H = painel.free_omega_hz[3] * 2 * np.pi
-            painel.compute_rayleigh_damping(
+            panel.compute_free_modes()
+            omega_L = panel.free_omega_hz[0] * 2 * np.pi
+            omega_H = panel.free_omega_hz[3] * 2 * np.pi
+            panel.compute_rayleigh_damping(
                 omega_low=omega_L, omega_high=omega_H
             )
 
-            analyses = Analysis(painel)
+            analyses = Analysis(panel)
 
             analyses.set_atmosphere(1e4)
 
@@ -200,13 +216,7 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
 
             vfluter[kh, kt] = analyses.v_inf_cr_interp
 
-    colors = [
-        "--ob",
-        "--pr",
-        "--sk",
-        "--dm",
-        "--Py",
-    ]
+    colors = ["--ob", "--pr", "--sk", "--dm", "--Py", "--^g"]
 
     plt.figure(figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
     for kh, h in enumerate(Hs):
@@ -215,12 +225,16 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
             vfluter[kh, :],
             colors[kh],
             markersize=3.5,
-            label=f"H = {h * 1e3:.1f} mm",
+            label=r"$H = %.1f~h_{panel}$" % h,
         )
     plt.gca().grid(visible=True, which="both", linestyle=":", linewidth=0.5)
     plt.xticks(thetas)
     plt.legend(
-        loc="best",
+        bbox_to_anchor=(0, 1.02, 1, 0.2),
+        loc="lower left",
+        mode="expand",
+        borderaxespad=0,
+        ncol=2,
         facecolor="white",
         framealpha=1,
         handlelength=1.7,
@@ -243,11 +257,11 @@ def question_02b(nfunc: int):
     AL = Isotropic("AL", 2700, 70e9, 0.3, alpha=21e-6, damping=0.05)
     # setup de simulacao
 
-    laminado = Laminate("Aluminio")
-    laminado.add_stack(AL, 5e-4)
+    laminate = Laminate("Aluminio")
+    laminate.add_stack(AL, 5e-4)
 
     #                a,   b
-    painel = Panel(0.3, 0.2, laminado, radius=1.0)
+    painel = Panel(0.3, 0.2, laminate, radius=1.0)
     painel.setup_kinematics(
         nfunc,
         theory=StructuralTheory.KIRCHHOFF,
@@ -289,6 +303,29 @@ def question_02b(nfunc: int):
     omega_H = painel.free_omega_hz[3] * 2 * np.pi
     painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
 
+    # 2. Natural Frequency variation with DeltaT
+    delta_ts = np.linspace(-0.2, 1.5, 50)
+    n_modes_plot = 4
+    omegas_history = np.zeros((n_modes_plot, len(delta_ts)))
+
+    for i, dt in enumerate(delta_ts):
+        painel.compute_thermal_stiffness(
+            delta_t=dt, distribution=BasisFunction.SINES
+        )
+        painel.compute_free_modes()
+        omegas_history[:, i] = painel.free_omega_hz[:n_modes_plot]
+
+    # Plot Frequency vs DeltaT
+    plt.figure(figsize=(6, 4), dpi=300)
+    for k in range(n_modes_plot):
+        plt.plot(delta_ts, omegas_history[k, :], label=f"Mode {k + 1}")
+    plt.xlabel(r"$\Delta T$ [${}^\circ$C]", fontsize=12)
+    plt.ylabel(r"$\omega$ [Hz]", fontsize=12)
+    plt.title("Thermal Influence on Natural Frequencies")
+    plt.legend(facecolor="white", framealpha=1)
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.show()
+
     # painel.run_thermal_buckling(distribution=BasisFunction.SINES)
 
     # painel.compute_thermal_stiffness(
@@ -305,15 +342,16 @@ def question_02b(nfunc: int):
 
 
 if __name__ == "__main__":
-    # Question 01
+    # Question 01 (a, b, c, d)
     # question_01(nfunc=4)
 
-    # Question 02
-    # Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0]) * 5e-4
-    # thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 85.0])
-    # question_02a(nfunc=6, Hs=Hs, thetas=thetas)
+    # Question 02 (a, b)
+    # Hs is the pad height in terms of fraction of panel total thickness
+    Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
+    thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
+    question_02a(nfunc=10, Hs=Hs, thetas=thetas)
 
-    question_02b(nfunc=10)
+    # question_02b(nfunc=10)
 
     input("Press Enter to finish...")
 
