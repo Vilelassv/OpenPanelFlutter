@@ -147,6 +147,11 @@ class Stiffener:
         nby_e = get_basis(self.panel.base_by, "vdfunc", "vfunc")
         nby_n = get_basis(self.panel.base_by, "vfunc", "vdfunc")
 
+        # Mapping derivatives from panel (xi, eta) to (x, y)
+        dedx = 2 / self.panel.a
+        dedy = -2 / self.panel.a * np.tan(self.panel.beta)
+        dndy = 2 / self.panel.b / np.cos(self.panel.beta)
+
         zeros = np.zeros_like(nu)
         # Compatibility with panel theory (only u, v and w for Kirchhoff)
         if self.panel.theory == StructuralTheory.KIRCHHOFF:
@@ -163,14 +168,14 @@ class Stiffener:
             nw_een = get_basis(self.panel.base_w, "vd2func", "vdfunc")
             nw_enn = get_basis(self.panel.base_w, "vdfunc", "vd2func")
 
-            nbx, nby = -nw_e, -nw_n
+            nbx, nby = -nw_e * dedx, -nw_e * dedy - nw_n * dndy
 
-            nbx_e, nby_e = -nw_ee, -nw_en
-            nbx_n, nby_n = -nw_en, -nw_nn
+            nbx_e, nby_e = -nw_ee * dedx, -nw_ee * dedy - nw_en * dndy
+            nbx_n, nby_n = -nw_en * dedx, -nw_en * dedy - nw_nn * dndy
 
-            nbx_ee, nby_ee = -nw_eee, -nw_een
-            nbx_nn, nby_nn = -nw_enn, -nw_nnn
-            nbx_en, nby_en = -nw_een, -nw_enn
+            nbx_ee, nby_ee = -nw_eee * dedx, -nw_eee * dedy - nw_een * dndy
+            nbx_nn, nby_nn = -nw_enn * dedx, -nw_enn * dedy - nw_nnn * dndy
+            nbx_en, nby_en = -nw_een * dedx, -nw_een * dedy - nw_enn * dndy
 
             # Second order derivatives for Kirchhoff-Love theory
             b1_ee = np.block(
@@ -237,11 +242,6 @@ class Stiffener:
         # Second order derivatives not required for Reissner-Mindlin theory
         if self.panel.theory == StructuralTheory.REISSNER_MINDLIN:
             b1_ee = b1_nn = b1_en = np.zeros_like(b1)
-
-        # Mapping derivatives from panel (xi, eta) to (x, y)
-        dedx = 2 / self.panel.a
-        dedy = -2 / self.panel.a * np.tan(self.panel.beta)
-        dndy = 2 / self.panel.b / np.cos(self.panel.beta)
 
         # Directional cosines for stiffener orientation
         dxdt, dydt = np.cos(self.theta), np.sin(self.theta)
@@ -413,12 +413,13 @@ class Stiffener:
 
             rho = self.laminate.plies[0].material.rho
             m11 = m22 = m33 = rho * self.area
-            m44, m55 = rho * self.inn_s, rho * self.j0_s
-            self.i0 = np.diag([m11, m22, m33, m44, m55])
+            m44, m55 = rho * self.izz_s, rho * self.inn_s
+            m66 = rho * self.j0_s
+            self.i0 = np.diag([m11, m22, m33, m44, m55, m66])
 
-            self._TMu = mat_select(5, 3, [0, 1, 2], [0, 1, 2])
-            self._TMu_t = mat_select(5, 3, [3], [2])
-            self._TMu_n = mat_select(5, 3, [4], [2])
+            self._TMu = mat_select(6, 3, [0, 1, 2], [0, 1, 2])
+            self._TMu_t = mat_select(6, 3, [3, 4], [1, 2])
+            self._TMu_n = mat_select(6, 3, [5], [2])
 
         # Integrate and assemble global matrices
         aux_k = (
@@ -427,8 +428,6 @@ class Stiffener:
             + self._TKu_nt @ self.ust_nt
             + self._TKu_tt @ self.ust_tt
         )
-        print(self._TKu_t @ self.ust_t[0, :, :])
-        print("aoba")
         aux_kt = np.transpose(aux_k, [0, 2, 1])
 
         aux_m = (
