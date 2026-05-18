@@ -112,7 +112,8 @@ class Analysis:
 
         # Structural matrices (already summed from Panel @properties)
         m_mat = self.panel.M_global
-        m_inv = la.inv(m_mat)
+        # Perform LU factorization once BEFORE the loop
+        lu, piv = la.lu_factor(m_mat)
         k_str = self.panel.K_structural
         c_str = self.panel.C_structural
 
@@ -143,8 +144,8 @@ class Analysis:
 
             state_matrix = np.zeros((2 * num_dofs, 2 * num_dofs))
             state_matrix[:num_dofs, num_dofs:] = np.eye(num_dofs)
-            state_matrix[num_dofs:, :num_dofs] = -m_inv @ k_tot
-            state_matrix[num_dofs:, num_dofs:] = -m_inv @ c_tot
+            state_matrix[num_dofs:, :num_dofs] = -la.lu_solve((lu, piv), k_tot)
+            state_matrix[num_dofs:, num_dofs:] = -la.lu_solve((lu, piv), c_tot)
 
             # Solve complex eigenvalue problem
             eigvals, mode_shapes = self.solve_state_space_eigenvalues(
@@ -168,6 +169,112 @@ class Analysis:
         self.v_infs = v_infs
         self.lambdas = (
             2.0 * (0.5 * self.rho_air * v_infs**2) / np.sqrt(mach_array**2 - 1)
+        )
+
+    def run_lambda_sweep(
+        self,
+        lambda_min: float = 0.0,
+        lambda_max: float = 500.0,
+        n_points: int = 100,
+        n_modes_save: int = 4,
+        theta_flow: float = 0.0,
+        ga_damping: float = 0.01,
+        use_ackeret: bool = False,
+    ):
+        """Perform a non-dimensional flutter sweep over a range of lambda.
+
+        This sweep is based on non-dimensional literature definitions,
+        scaling the aerodynamic stiffness and damping matrices directly through
+        the non-dimensional dynamic pressure parameter (lambda).
+
+        Args:
+            lambda_min (float): Starting non-dimensional lambda value.
+            lambda_max (float): Ending non-dimensional lambda value.
+            n_points (int): Number of points in the sweep.
+            n_modes_save (int): Number of modes to store in history.
+            theta_flow (float): Flow angle [degree].
+            ga_damping (float): Non-dimensional aerodynamic damping parameter.
+            use_ackeret (bool): If True, ignores aerodynamic damping matrix.
+        """
+        lambda_array = np.linspace(lambda_min, lambda_max, n_points)
+        theta_flow_rad = np.radians(theta_flow)
+
+        # Combine aerodynamic directional components based on flow angle
+        kaer_combined = self.panel._K_aer * np.cos(
+            theta_flow_rad
+        ) + self.panel._K_aery * np.sin(theta_flow_rad)
+
+        num_dofs = self.panel.len_tot
+        self.omega_hz = np.zeros((n_points, num_dofs))
+        self.damping_zeta = np.zeros((n_points, num_dofs))
+        self.img_omega = np.zeros((n_points, num_dofs))
+        self.modes_history = np.zeros(
+            (n_points, num_dofs, n_modes_save), dtype=np.complex128
+        )
+
+        # Toggle for Ackeret theory (disables damping)
+        damp_toggle = 0.0 if use_ackeret else 1.0
+        self.use_ackeret = use_ackeret
+
+        # Extract material and geometric properties for non-dimensional scaling
+        material = self.panel.laminate.plies[0].material
+        h_total = self.panel.laminate.total_thickness
+        a_chord = self.panel.a
+        rho_material = material.rho
+
+        # Handle material properties dynamically for isotropic/composite layups
+        e1 = material.E if hasattr(material, "E") else material.E1
+        nu12 = material.nu if hasattr(material, "nu") else material.nu12
+        nu21 = material.nu if hasattr(material, "nu") else material.nu21
+
+        # Calculate bending stiffness (D011) and reference frequency (w0)
+        d011 = (e1 * h_total**3) / (12.0 * (1.0 - nu12 * nu21))
+        w0 = np.sqrt(d011 / (rho_material * h_total * a_chord**4))
+
+        # Structural matrices and LU decomposition for efficiency
+        m_mat = self.panel.M_global
+        lu, piv = la.lu_factor(m_mat)
+        k_str = self.panel.K_structural
+        c_str = self.panel.C_structural
+
+        phi_ref = None  # Reference mode shapes for tracking logic
+
+        for i, lamb_val in enumerate(lambda_array):
+            # Non-dimensional scaling factors
+            stiffness_factor = (lamb_val * d011) / (a_chord**3)
+            chi_damp = (
+                np.sqrt(lamb_val * ga_damping) * d011 / (w0 * a_chord**4)
+            )
+
+            # Assemble current aeroelastic system matrices
+            k_tot = k_str + (stiffness_factor * kaer_combined)
+            c_tot = c_str + damp_toggle * (chi_damp * self.panel._C_caer)
+
+            # Construct state-space formulation
+            state_matrix = np.zeros((2 * num_dofs, 2 * num_dofs))
+            state_matrix[:num_dofs, num_dofs:] = np.eye(num_dofs)
+            state_matrix[num_dofs:, :num_dofs] = -la.lu_solve((lu, piv), k_tot)
+            state_matrix[num_dofs:, num_dofs:] = -la.lu_solve((lu, piv), c_tot)
+
+            # Eigensolver and robust MAC sorting
+            eigvals, mode_shapes = self.solve_state_space_eigenvalues(
+                state_matrix, num_dofs
+            )
+            eigvals, mode_shapes = self.sort_modes(
+                eigvals, mode_shapes, phi_ref
+            )
+            phi_ref = mode_shapes.copy()
+
+            # Store computed data
+            self.omega_hz[i, :] = np.abs(eigvals) / (2.0 * np.pi)
+            self.damping_zeta[i, :] = np.real(eigvals) / np.abs(eigvals)
+            self.img_omega[i, :] = np.imag(eigvals**2)
+            self.modes_history[i, :, :] = mode_shapes[:, :n_modes_save]
+
+        # Expose attributes for plotting routines
+        self.lambdas = lambda_array
+        self.machs = (
+            None  # Explicitly defined as None for non-dimensional runs
         )
 
     def solve_state_space_eigenvalues(self, a_matrix, num_dofs):
@@ -476,9 +583,11 @@ class Analysis:
         nu12 = material.nu if hasattr(material, "nu") else material.nu12
         nu21 = material.nu if hasattr(material, "nu") else material.nu21
 
+        ga = 0.01
+
         D011 = E1 * h**3 / 12 / (1 - nu12 * nu21)
         w0 = (D011 / (material.rho * h * obj.panel.a**4)) ** 0.5
-        chi = ((lamb_val * 0.01) ** 0.5) * D011 / (w0 * obj.panel.a**4)
+        chi = ((lamb_val * ga) ** 0.5) * D011 / (w0 * obj.panel.a**4)
 
         kaer_combined = obj.panel._K_aer * np.cos(
             theta_flow
