@@ -185,7 +185,6 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
                 pad = Laminate("Pad")
                 # Ensure increase is zero for theta 90 degrees
                 d_h = 0.0 if theta == 90.0 else h / np.tan(np.radians(theta))
-                print(h, theta, d_h)
                 pad.add_stack(AL, 30e-3 + d_h)
                 panel.insert_stiffener(
                     x0=0.0,
@@ -216,6 +215,11 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
 
             vfluter[kh, kt] = analyses.v_inf_cr_interp
 
+            print(
+                f"H = {h * 1e3:.2f} mm, theta = {theta:.1f} o, flutter = "
+                + f"{vfluter[kh, kt]:.2f} m/s"
+            )
+
     colors = ["--ob", "--pr", "--sk", "--dm", "--Py", "--^g"]
 
     plt.figure(figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
@@ -244,6 +248,8 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
     plt.xlabel(r"$\theta$ $[{}^\circ]$", fontsize=10)
     plt.show(block=False)
 
+    return panel
+
 
 def question_02b(nfunc: int):
     """Function to run the second question of the list.
@@ -261,8 +267,8 @@ def question_02b(nfunc: int):
     laminate.add_stack(AL, 5e-4)
 
     #                a,   b
-    painel = Panel(0.3, 0.2, laminate, radius=1.0)
-    painel.setup_kinematics(
+    panel = Panel(0.3, 0.2, laminate, radius=1.0)
+    panel.setup_kinematics(
         nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
@@ -275,7 +281,7 @@ def question_02b(nfunc: int):
     flange = Laminate("Flange")
     flange.add_stack(AL, 1e-3)
 
-    painel.insert_stiffener(
+    panel.insert_stiffener(
         x0=0.0,
         y0=0.15,
         x1=0.3,
@@ -286,7 +292,7 @@ def question_02b(nfunc: int):
         side=-1,
     )
 
-    painel.insert_stiffener(
+    panel.insert_stiffener(
         x0=0.0,
         y0=0.15,
         x1=0.3,
@@ -297,23 +303,23 @@ def question_02b(nfunc: int):
         side=-1,
     )
 
-    painel.compute_free_modes()
-    painel.plot_free_modes(n_modes=4)
-    omega_L = painel.free_omega_hz[0] * 2 * np.pi
-    omega_H = painel.free_omega_hz[3] * 2 * np.pi
-    painel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
+    panel.compute_free_modes()
+    panel.plot_free_modes(n_modes=4)
+    omega_L = panel.free_omega_hz[0] * 2 * np.pi
+    omega_H = panel.free_omega_hz[3] * 2 * np.pi
+    panel.compute_rayleigh_damping(omega_low=omega_L, omega_high=omega_H)
 
     # 2. Natural Frequency variation with DeltaT
-    delta_ts = np.linspace(-0.2, 1.5, 50)
+    delta_ts = np.linspace(20, 30, 50)
     n_modes_plot = 4
     omegas_history = np.zeros((n_modes_plot, len(delta_ts)))
 
     for i, dt in enumerate(delta_ts):
-        painel.compute_thermal_stiffness(
+        panel.compute_thermal_stiffness(
             delta_t=dt, distribution=BasisFunction.SINES
         )
-        painel.compute_free_modes()
-        omegas_history[:, i] = painel.free_omega_hz[:n_modes_plot]
+        panel.compute_free_modes()
+        omegas_history[:, i] = panel.free_omega_hz[:n_modes_plot]
 
     # Plot Frequency vs DeltaT
     plt.figure(figsize=(6, 4), dpi=300)
@@ -326,19 +332,7 @@ def question_02b(nfunc: int):
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.show()
 
-    # painel.run_thermal_buckling(distribution=BasisFunction.SINES)
-
-    # painel.compute_thermal_stiffness(
-    #    delta_t=0.4, distribution=BasisFunction.SINES
-    # )
-
-    # analyses = Analysis(painel)
-
-    # analyses.set_atmosphere(1e4)
-
-    # analyses.run_flutter_sweep(mach_max=10, n_points=500, n_modes_save=4)
-    # analyses.identify_flutter()
-    # analyses.plot_flutter_curves()
+    panel.run_thermal_buckling(delta_t0=800, distribution=BasisFunction.SINES)
 
 
 if __name__ == "__main__":
@@ -347,11 +341,11 @@ if __name__ == "__main__":
 
     # Question 02 (a, b)
     # Hs is the pad height in terms of fraction of panel total thickness
-    Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
-    thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
-    question_02a(nfunc=10, Hs=Hs, thetas=thetas)
+    # Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
+    # thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
+    # question_02a(nfunc=2, Hs=Hs, thetas=thetas)
 
-    # question_02b(nfunc=10)
+    question_02b(nfunc=10)
 
     input("Press Enter to finish...")
 
