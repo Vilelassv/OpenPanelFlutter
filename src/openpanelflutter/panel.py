@@ -532,7 +532,7 @@ class Panel:
         m_total = self.M_global
 
         # Generalized eigenvalue problem
-        eigvals, eigvecs = la.eigh(k_total, m_total)
+        eigvals, eigvecs = la.eig(k_total, m_total)
 
         # Natural frequencies in rad/s
         omega_rad = np.real(np.sqrt(eigvals))
@@ -828,11 +828,6 @@ class Panel:
                 * self.jac
             )
 
-            print(
-                np.tensordot(stf.wi_stf * dt_stf, stf.F_tilde, [0, 0])
-                * self.jac
-            )
-
         # Solve for equivalent displacements using Cholesky decomposition
         c_factor = la.cho_factor(self.K_structural)
         q_t = la.cho_solve(c_factor, f_tilde)
@@ -865,7 +860,7 @@ class Panel:
         )
 
         # Ensure symmetry
-        K_sig = (K_sig + K_sig.T) / 2.0
+        # K_sig = (K_sig + K_sig.T) / 2.0
 
         self._K_sig = K_sig
 
@@ -1182,7 +1177,7 @@ class Panel:
                 pass
 
     def run_thermal_buckling(
-        self, plot_first_mode: bool = True, **kwargs
+        self, plot_first_mode: bool = True, delta_t0: float = 1.0, **kwargs
     ) -> float:
         """Compute the critical thermal buckling temperature.
 
@@ -1193,6 +1188,8 @@ class Panel:
         Args:
             plot_first_mode (bool): If True, generates a 3D trisurf plot of
                 the first buckling mode shape.
+            delta_t0 (float): Intial temperature to solve the eigenvalue
+                problem. Default is 1.0
             **kwargs:
                 distribution (str): The temperature field distribution type
                     (e.g., "cte" for constant, "sines", etc.). Defaults "cte".
@@ -1204,7 +1201,7 @@ class Panel:
         dist = kwargs.get("distribution", "cte")
 
         # Compute geometric thermal stiffness for a unit temperature variation.
-        self.compute_thermal_stiffness(1.0, distribution=dist)
+        self.compute_thermal_stiffness(delta_t0, distribution=dist)
 
         # Solve the generalized eigenvalue problem:
         # [K_str - K_sig] {phi} = -lambda [K_sig] {phi}
@@ -1215,7 +1212,7 @@ class Panel:
 
         # Sort eigenvalues to find the first positive critical Delta T
         idx = np.real(eigvals).argsort()
-        dt_cr = float(np.real(eigvals[idx[0]]))
+        dt_cr = float(np.real(eigvals[idx[0]])) * delta_t0
         first_mode_vector = eigvecs[:, idx[0]]
 
         # Map reference coordinates to physical geometry (handling skewness)
