@@ -119,4 +119,6 @@ if __name__ == "__main__":
     # Example 4:
     run_thermal_example(radius_ratio=1.25)
 
+    input("Press Enter to exit...")
+
 # %%

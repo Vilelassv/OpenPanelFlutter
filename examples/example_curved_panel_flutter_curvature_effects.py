@@ -57,13 +57,7 @@ def run_flutter_analysis(radius_ratio: float):
 
     # Run flutter sweep up to Mach 10
     sim.run_flutter_sweep(mach_max=10.0, n_points=500, n_modes_save=4)
-    sim.identify_flutter(
-        loc="best",
-        facecolor="white",
-        framealpha=1,
-        handlelength=1.7,
-        markerscale=1,
-    )
+    sim.identify_flutter()
 
     print(f"Curvature 1/R = {radius_ratio}")
     print(f"Critical Flutter Velocity: {sim.v_inf_cr_interp:.2f} m/s\n")
@@ -81,5 +75,7 @@ if __name__ == "__main__":
     run_flutter_analysis(radius_ratio=1.0)
     # Example 2:
     run_flutter_analysis(radius_ratio=1.25)
+
+    input("Press Enter to exit...")
 
 # %%
