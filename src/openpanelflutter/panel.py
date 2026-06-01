@@ -540,7 +540,7 @@ class Panel:
         # Sort frequencies and corresponding eigenvectors
         sort_indices = omega_rad.argsort()
         omega_rad = omega_rad[sort_indices]
-        eigvecs = eigvecs[:, sort_indices]
+        eigvecs = np.real(eigvecs[:, sort_indices])
 
         # Store frequencies in Hz and mode shapes
         self.free_omega_hz = omega_rad / (2.0 * np.pi)
@@ -1319,22 +1319,21 @@ class Panel:
 
         return m_glob
 
-    def eval_bdof_at_point(self, point: np.array) -> np.array:
+    def eval_bdof_at_point(self, points: np.array) -> np.array:
         """Calculate matrix that provides the displacements at a point.
 
         This method interpolates the global degrees of freedom (DOF)
 
         Args:
-            point (np.array): Non-dimensional coordinates [xi, eta] where
-                the displacement is evaluated.
+            points (np.array): Non-dimensional coordinates. Can be a 1D array
+            [xi, eta] for a single point, or a 2D array
+            [[xi_1, eta_1], ..., [xi_m, eta_m]] for multiple points.
 
         Returns:
             float: The shape functions DOF matrix.
         """
         # Extract non-dimensional coordinates and prepare evaluation point
-        xp = point[0]
-        yp = point[1]
-        xys = np.array([[xp, yp]])
+        xys = points
 
         # Helper to fetch and evaluate basis functions at the given point
         def get_basis(base_set, attr1, attr2):
