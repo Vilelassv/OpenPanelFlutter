@@ -1,7 +1,8 @@
 """Verification for OpenPanelFlutter comparing results with Bardell (1992).
 
 This script benchmark-tests free vibration frequency parameters for various
-skew plates against classical Ritz-method literature results.
+skew plates against literature results of Bardell (1992) available at
+https://doi.org/10.1016/0045-7949(92)90044-Z.
 """
 
 from pathlib import Path
@@ -17,7 +18,6 @@ from openpanelflutter.material import Isotropic, Laminate
 from openpanelflutter.panel import Panel
 
 CURRENT_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = CURRENT_DIR.parent
 
 # --- Reference Databases from Bardell (1992) ---
 
@@ -183,7 +183,7 @@ def write_comp_table(
 ):
     """Generate LaTeX comparative tables for 6-mode configurations."""
     str_perc = "_perc" if percent else ""
-    output_dir = PROJECT_ROOT / "Tabelas" / "Compare Bardell"
+    output_dir = CURRENT_DIR / "tables" / "compare_Bardell"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = output_dir / f"comp{boundary}{theory}{str_perc}.tex"
@@ -278,7 +278,7 @@ def write_comp_table(
 def write_comp_table_4mode(data, ref, angles, boundary, theory, percent=True):
     """Generate LaTeX comparative tables for 4-mode configurations."""
     str_perc = "_perc" if percent else ""
-    output_dir = PROJECT_ROOT / "Tabelas" / "Compare Bardell"
+    output_dir = CURRENT_DIR / "tables" / "compare_Bardell"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     file_path = output_dir / f"comp{boundary}{theory}{str_perc}.tex"
@@ -340,117 +340,112 @@ def write_comp_table_4mode(data, ref, angles, boundary, theory, percent=True):
         file_tex.write(r"\end{tabular}")
 
 
-def main(save_tables=False):
+def run_case(boundary, n_func, save_tables=False, percent_table=False):
     """Run verification and generate benchmarking data against literature."""
     angles = np.array([0.0, 15.0, 30.0, 45.0, 60.0, 75.0])
     aspects = np.array([0.5, 1.0, 2.0])
-    boundaries = [
-        BoundaryCondition.SSSS,
-        BoundaryCondition.CCCC,
-        BoundaryCondition.CCSS,
-        BoundaryCondition.SFSF,
-        BoundaryCondition.CFFF,
-    ]
-    n_functions = [12, 16, 17, 19, 19]
 
-    for kk, bound in enumerate(boundaries):
-        bound_str = bound.value
-        n_func = n_functions[kk]
-        ans_rm = np.zeros(shape=DATABASE[kk].shape)
-        row_counter = 0
-        is_cantilever = kk >= 3
+    bound_str = boundary.value
 
-        for skew_ang in angles:
-            # 4-mode cases (SFSF, CFFF), slice only the relevant aspect ratios
-            current_aspects = [1.0] if kk >= 3 else aspects
+    if bound_str == "SSSS":
+        reference = DATABASE[0]
+    elif bound_str == "CCCC":
+        reference = DATABASE[1]
+    elif bound_str == "CCSS":
+        reference = DATABASE[2]
+    elif bound_str == "SFSF":
+        reference = DATABASE[3]
+    elif bound_str == "CFFF":
+        reference = DATABASE[4]
 
-            for asp in current_aspects:
-                print(
-                    f"Running: Boundary={bound_str} | NFUNC={n_func} |"
-                    f" beta={skew_ang:.0f}° | Aspect={asp}"
-                )
+    ans_rm = np.zeros(shape=reference.shape)
+    row_counter = 0
+    is_4modes = True if bound_str == "SFSF" or bound_str == "CFFF" else False
 
-                # Execute solver instance
-                panel = Panel(
-                    length=700e-3,
-                    width=700e-3 / asp,
-                    laminate=LAMINATE,
-                    beta=skew_ang,
-                )
-                panel.setup_kinematics(
-                    n_func,
-                    theory=StructuralTheory.REISSNER_MINDLIN,
-                    basis_type=BasisFunction.BARDELL,
-                    boundary_condition=bound,
-                )
-                panel.compute_free_modes()
+    for skew_ang in angles:
+        # 4-mode cases (SFSF, CFFF), slice only the relevant aspect ratios
+        current_aspects = [1.0] if is_4modes else aspects
 
-                material = panel.laminate.plies[0].material
-                h = panel.laminate.total_thickness
-                e = material.E
-                rho = material.rho
-                nu = material.nu
-                a = panel.a
+        for asp in current_aspects:
+            print(
+                f"Running: Boundary={bound_str} | NFUNC={n_func} |"
+                f" beta={skew_ang:.0f}° | Aspect={asp}"
+            )
 
-                # Structural parameter scaling calculations
-                d_flexural_rigidity = (e * h**3) / (1 - nu**2) / 12
-                omega_scale_factor = (
-                    rho * h * (a**4) / d_flexural_rigidity
-                ) ** 0.5
-                omega_rm_scaled = (
-                    omega_scale_factor * 2 * np.pi * panel.free_omega_hz
-                )
+            # Execute solver instance
+            panel = Panel(
+                length=700e-3,
+                width=700e-3 / asp,
+                laminate=LAMINATE,
+                beta=skew_ang,
+            )
+            panel.setup_kinematics(
+                n_func,
+                theory=StructuralTheory.REISSNER_MINDLIN,
+                basis_type=BasisFunction.BARDELL,
+                boundary_conditions=boundary,
+            )
+            panel.compute_free_modes()
 
-                # Extract first active frequencies matching benchmark limits
-                num_modes = DATABASE[kk].shape[1]
-                ans_rm[row_counter, :] = omega_rm_scaled[0:num_modes]
-                row_counter += 1
+            material = panel.laminate.plies[0].material
+            h = panel.laminate.total_thickness
+            e = material.E
+            rho = material.rho
+            nu = material.nu
+            a = panel.a
 
-        # Print detailed matrix summary directly to terminal screen
-        print_terminal_summary(
-            bound_str, ans_rm, DATABASE[kk], angles, aspects, is_cantilever
-        )
+            # Structural parameter scaling calculations
+            d_flexural_rigidity = (e * h**3) / (1 - nu**2) / 12
+            omega_scale_factor = (
+                rho * h * (a**4) / d_flexural_rigidity
+            ) ** 0.5
+            omega_rm_scaled = (
+                omega_scale_factor * 2 * np.pi * panel.free_omega_hz
+            )
 
-        if save_tables:
-            # Output table files for LaTeX generation, with both percentage
-            # error and absolute reference values
-            if kk >= 3:
-                write_comp_table_4mode(
-                    ans_rm,
-                    DATABASE[kk],
-                    angles,
-                    bound_str,
-                    "RM",
-                    percent=True,
-                )
-                write_comp_table_4mode(
-                    ans_rm,
-                    DATABASE[kk],
-                    angles,
-                    bound_str,
-                    "RM",
-                    percent=False,
-                )
-            else:
-                write_comp_table(
-                    ans_rm,
-                    DATABASE[kk],
-                    angles,
-                    aspects,
-                    bound_str,
-                    "RM",
-                    percent=True,
-                )
-                write_comp_table(
-                    ans_rm,
-                    DATABASE[kk],
-                    angles,
-                    aspects,
-                    bound_str,
-                    "RM",
-                    percent=False,
-                )
+            # Extract first active frequencies matching benchmark limits
+            num_modes = reference.shape[1]
+            ans_rm[row_counter, :] = omega_rm_scaled[0:num_modes]
+            row_counter += 1
+
+    # Print detailed matrix summary directly to terminal screen
+    print_terminal_summary(
+        bound_str, ans_rm, reference, angles, aspects, is_4modes
+    )
+
+    if save_tables:
+        # Output table files for LaTeX generation, with both percentage
+        # error and absolute reference values
+        if is_4modes:
+            write_comp_table_4mode(
+                ans_rm,
+                reference,
+                angles,
+                bound_str,
+                panel.theory.value,
+                percent=percent_table,
+            )
+        else:
+            write_comp_table(
+                ans_rm,
+                reference,
+                angles,
+                aspects,
+                bound_str,
+                panel.theory.value,
+                percent=percent_table,
+            )
 
 
 if __name__ == "__main__":
-    main(save_tables=False)
+    # Execute all benchmark cases and generate comparative tables for LaTeX
+    # n_func are selected according to Bardell for each boundary condition.
+    # run_case(BoundaryCondition.SSSS, n_func=18, save_tables=True)
+
+    # run_case(BoundaryCondition.CCCC, n_func=16, save_tables=True)
+
+    run_case(BoundaryCondition.CCSS, n_func=17, save_tables=True)
+
+    # run_case(BoundaryCondition.SFSF, n_func=19, save_tables=True)
+
+    # run_case(BoundaryCondition.CFFF, n_func=19, save_tables=True)

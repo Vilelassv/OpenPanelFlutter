@@ -273,9 +273,10 @@ class Analysis:
 
         # Expose attributes for plotting routines
         self.lambdas = lambda_array
-        self.machs = (
-            None  # Explicitly defined as None for non-dimensional runs
-        )
+
+        # Explicitly defined as None for non-dimensional runs
+        self.machs = None
+        self.v_infs = None
 
     def solve_state_space_eigenvalues(self, a_matrix, num_dofs):
         """Solve the eigenvalue problem for the state-space matrix.
@@ -448,8 +449,16 @@ class Analysis:
 
                     # 1. Store discrete values (at the exact sweep point)
                     self.id_cr = idx_unstable
-                    self.mach_cr = self.machs[idx_unstable]
-                    self.v_inf_cr = self.v_infs[idx_unstable]
+                    self.mach_cr = (
+                        self.machs[idx_unstable]
+                        if self.machs is not None
+                        else None
+                    )
+                    self.v_inf_cr = (
+                        self.v_infs[idx_unstable]
+                        if self.v_infs is not None
+                        else None
+                    )
                     self.lamb_cr = current_lamb_at_cross
 
                     # 2. Linear Interpolation: only the two bracketing points
@@ -458,11 +467,21 @@ class Analysis:
                         [idx_stable, idx_unstable], mode
                     ]
 
-                    self.mach_cr_interp = np.interp(
-                        0.0, z_pair, self.machs[[idx_stable, idx_unstable]]
+                    self.mach_cr_interp = (
+                        np.interp(
+                            0.0, z_pair, self.machs[[idx_stable, idx_unstable]]
+                        )
+                        if self.machs is not None
+                        else None
                     )
-                    self.v_inf_cr_interp = np.interp(
-                        0.0, z_pair, self.v_infs[[idx_stable, idx_unstable]]
+                    self.v_inf_cr_interp = (
+                        np.interp(
+                            0.0,
+                            z_pair,
+                            self.v_infs[[idx_stable, idx_unstable]],
+                        )
+                        if self.v_infs is not None
+                        else None
                     )
                     self.lamb_cr_interp = np.interp(
                         0.0, z_pair, self.lambdas[[idx_stable, idx_unstable]]
