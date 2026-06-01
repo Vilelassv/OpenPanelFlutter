@@ -7,3 +7,8 @@ __pycache__/
 .vscode/
 build/
 dist/
+benchmarks/figures/*
+!benchmarks/figures/.gitkeep
+
+benchmarks/tables/*
+!benchmarks/tables/.gitkeep
