@@ -195,9 +195,9 @@ def write_comp_table(
         header = (
             r" \multirow{3}{*}{\gls{beta}} & "
             r"\multirow{3}{*}{\glslink{ab}{$a/b$}} & "
-            r"\multicolumn{1}{|c}{Mode 1} & \multicolumn{1}{|c}{Mode 2} & "
-            r"\multicolumn{1}{|c}{Mode 3} & \multicolumn{1}{|c}{Mode 4} & "
-            r"\multicolumn{1}{|c}{Mode 5} & \multicolumn{1}{|c}{Mode 6}"
+            r"\multicolumn{1}{c|}{Mode 1} & \multicolumn{1}{c|}{Mode 2} & "
+            r"\multicolumn{1}{c|}{Mode 3} & \multicolumn{1}{c|}{Mode 4} & "
+            r"\multicolumn{1}{c|}{Mode 5} & \multicolumn{1}{c}{Mode 6}"
             r" \\ \cline{3-8}" + "\n"
         )
         file_tex.write(header)
@@ -224,26 +224,27 @@ def write_comp_table(
                 if angle_idx > 0:
                     file_tex.write(r"\midrule" + "\n")
                 row_start = (
-                    f"\\multirow{{6}}{{*}}{{{angles[angle_idx]:.0f}^o}} & "
+                    rf"\multirow{{6}}{{*}}{{${angles[angle_idx]:.0f}^\circ$}} "
                 )
+                row_start += r" & "
 
                 if aspects[ii % 3] in [1.0, 2.0]:
                     row_start += (
-                        f"\\multirow{{2}}{{*}}{{{aspects[ii % 3]:.0f}}} "
+                        rf"\multirow{{2}}{{*}}{{${aspects[ii % 3]:.0f}$}} "
                     )
                 else:
                     row_start += (
-                        f"\\multirow{{2}}{{*}}{{{aspects[ii % 3]:.1f}}} "
+                        rf"\multirow{{2}}{{*}}{{${aspects[ii % 3]:.1f}$}} "
                     )
                 angle_idx += 1
             else:
                 if aspects[ii % 3] in [1.0, 2.0]:
                     row_start = (
-                        f" & \\multirow{{2}}{{*}}{{{aspects[ii % 3]:.0f}}} "
+                        rf" & \multirow{{2}}{{*}}{{${aspects[ii % 3]:.0f}$}} "
                     )
                 else:
                     row_start = (
-                        f" & \\multirow{{2}}{{*}}{{{aspects[ii % 3]:.1f}}} "
+                        rf" & \multirow{{2}}{{*}}{{${aspects[ii % 3]:.1f}$}} "
                     )
 
             row_alt = " & "
@@ -289,8 +290,8 @@ def write_comp_table_4mode(data, ref, angles, boundary, theory, percent=True):
 
         header = (
             r" \multirow{3}{*}{\gls{beta}} & "
-            r"\multicolumn{1}{|c}{Mode 1} & \multicolumn{1}{|c}{Mode 2} & "
-            r"\multicolumn{1}{|c}{Mode 3} & \multicolumn{1}{|c}{Mode 4}"
+            r"\multicolumn{1}{c|}{Mode 1} & \multicolumn{1}{c|}{Mode 2} & "
+            r"\multicolumn{1}{c|}{Mode 3} & \multicolumn{1}{c}{Mode 4}"
             r" \\ \cline{2-5}" + "\n"
         )
         file_tex.write(header)
@@ -314,7 +315,9 @@ def write_comp_table_4mode(data, ref, angles, boundary, theory, percent=True):
         for ii in range(ref.shape[0]):
             if angle_idx > 0:
                 file_tex.write(r"\midrule" + "\n")
-            row_start = f"\\multirow{{2}}{{*}}{{{angles[angle_idx]:.0f}^o}} "
+            row_start = (
+                rf"\multirow{{2}}{{*}}{{${angles[angle_idx]:.0f}^\circ$}} "
+            )
             angle_idx += 1
             row_alt = " "
 
@@ -440,12 +443,12 @@ def run_case(boundary, n_func, save_tables=False, percent_table=False):
 if __name__ == "__main__":
     # Execute all benchmark cases and generate comparative tables for LaTeX
     # n_func are selected according to Bardell for each boundary condition.
-    # run_case(BoundaryCondition.SSSS, n_func=18, save_tables=True)
+    run_case(BoundaryCondition.SSSS, n_func=18, save_tables=True)
 
-    # run_case(BoundaryCondition.CCCC, n_func=16, save_tables=True)
+    run_case(BoundaryCondition.CCCC, n_func=16, save_tables=True)
 
     run_case(BoundaryCondition.CCSS, n_func=17, save_tables=True)
 
-    # run_case(BoundaryCondition.SFSF, n_func=19, save_tables=True)
+    run_case(BoundaryCondition.SFSF, n_func=19, save_tables=True)
 
-    # run_case(BoundaryCondition.CFFF, n_func=19, save_tables=True)
+    run_case(BoundaryCondition.CFFF, n_func=19, save_tables=True)
