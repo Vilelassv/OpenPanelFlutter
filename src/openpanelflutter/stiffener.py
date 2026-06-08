@@ -367,7 +367,8 @@ class Stiffener:
             self._TMu_t = mat_select(5, 5, [], [])
             self._TMu_n = mat_select(5, 5, [], [])
 
-            self._Talpha = mat_select(5, 5, [0], [0])
+            self._TFu_t = mat_select(3, 5, [0], [0])
+            self._Talpha = mat_select(3, 3, [0], [0])
 
         # Constitutive matrix for Euler-Bernoulli Beam
         elif self.theory == StructuralTheory.EULER_BERNOULLI:
