@@ -19,6 +19,56 @@ from .integrator import Integrator
 apply_plot_style()
 
 
+def _single_sim_worker(
+    lamb_val, obj, tf, dt, Nmodes, theta_flow, kind, solver_type, kwargs
+):
+    """Internal worker function for parallel processing."""
+    # This logic replicates the matrix assembly for a single lambda
+    m_mat = obj.panel.M_global
+    k_str = obj.panel.K_structural
+    c_str = obj.panel.C_structural
+
+    material = obj.panel.laminate.plies[0].material
+    h = obj.panel.laminate.total_thickness
+    E1 = material.E if hasattr(material, "E") else material.E1
+    nu12 = material.nu if hasattr(material, "nu") else material.nu12
+    nu21 = material.nu if hasattr(material, "nu") else material.nu21
+
+    ga = 0.01
+
+    D011 = E1 * h**3 / 12 / (1 - nu12 * nu21)
+    w0 = (D011 / (material.rho * h * obj.panel.a**4)) ** 0.5
+    chi = ((lamb_val * ga) ** 0.5) * D011 / (w0 * obj.panel.a**4)
+
+    kaer_combined = obj.panel._K_aer * np.cos(
+        theta_flow
+    ) + obj.panel._K_aery * np.sin(theta_flow)
+
+    k_tot = k_str + (lamb_val * D011 / (obj.panel.a**3)) * kaer_combined
+    c_tot = c_str + chi * obj.panel._C_caer
+
+    integ = Integrator(
+        obj.panel,
+        tf,
+        dt,
+        m_mat,
+        k_tot,
+        c_tot,
+        n_modes=Nmodes,
+        kind=kind,
+        **kwargs,
+    )
+
+    if solver_type.lower() == "gen_alpha":
+        integ.solve_gen_alpha()
+    else:
+        integ.solve_cdm()
+    return {
+        "displ": integ.displ,
+        "time": integ.time_array,
+    }
+
+
 class Analysis:
     """Handles aeroelastic simulations and atmospheric data.
 
@@ -586,53 +636,6 @@ class Analysis:
         plt.tight_layout()
         plt.show(block=False)
 
-    @staticmethod
-    def _single_sim_worker(
-        lamb_val, obj, tf, dt, Nmodes, theta_flow, kind, solver_type, kwargs
-    ):
-        """Internal worker function for parallel processing."""
-        # This logic replicates the matrix assembly for a single lambda
-        m_mat = obj.panel.M_global
-        k_str = obj.panel.K_structural
-        c_str = obj.panel.C_structural
-
-        material = obj.panel.laminate.plies[0].material
-        h = obj.panel.laminate.total_thickness
-        E1 = material.E if hasattr(material, "E") else material.E1
-        nu12 = material.nu if hasattr(material, "nu") else material.nu12
-        nu21 = material.nu if hasattr(material, "nu") else material.nu21
-
-        ga = 0.01
-
-        D011 = E1 * h**3 / 12 / (1 - nu12 * nu21)
-        w0 = (D011 / (material.rho * h * obj.panel.a**4)) ** 0.5
-        chi = ((lamb_val * ga) ** 0.5) * D011 / (w0 * obj.panel.a**4)
-
-        kaer_combined = obj.panel._K_aer * np.cos(
-            theta_flow
-        ) + obj.panel._K_aery * np.sin(theta_flow)
-
-        k_tot = k_str + (lamb_val * D011 / (obj.panel.a**3)) * kaer_combined
-        c_tot = c_str + chi * obj.panel._C_caer
-
-        integ = Integrator(
-            obj.panel,
-            tf,
-            dt,
-            m_mat,
-            k_tot,
-            c_tot,
-            n_modes=Nmodes,
-            kind=kind,
-            **kwargs,
-        )
-
-        if solver_type.lower() == "gen_alpha":
-            integ.solve_gen_alpha()
-        else:
-            integ.solve_cdm()
-        return integ
-
     def post_flutter_sim(
         self, lamb, tf, dt, Nmodes, theta_flow=0.0, kind="NM", **kwargs
     ):
@@ -669,12 +672,15 @@ class Analysis:
             )
 
             start = timer()
-            print("Simulating...")
+            print(
+                f"Parallel batch with {len(lamb_list)} cases, "
+                f"using {n_proc} processors. Simulating..."
+            )
             mp.freeze_support()
 
             # Partial function to fix constant arguments
             worker = partial(
-                self._single_sim_worker,
+                _single_sim_worker,
                 obj=self,
                 tf=tf,
                 dt=dt,
@@ -705,7 +711,7 @@ class Analysis:
         else:
             # Sequential execution
             start = timer()
-            print("Simulating...")
+            print(f"Serial batch with {len(lamb_list)} cases. Simulating...")
             results = [
                 self._single_sim_worker(
                     lamb,
@@ -736,18 +742,16 @@ class Analysis:
                 "%d h %d m % d s" % (time_h, time_m, time_s),
             )
         self.results = results
-        wA = np.zeros(shape=(len(results), 1))
-        wA_p = np.zeros(shape=(len(results), 1))
+        wA = np.zeros(shape=(len(results),))
+        wA_p = np.zeros(shape=(len(results),))
         for kr, result in enumerate(results):
-            wA[kr], _, _ = self.max_lco_amplitude(result.panel, result.displ)
+            wA[kr], _, _ = self.max_lco_amplitude(result.get("displ"))
             wA_p[kr] = self.get_point_amplitude(
-                result.panel, result.displ, np.array([0.5, 0.0])
+                result.get("displ"), np.array([[0.5, 0.0]])
             )
         return wA, wA_p
 
-    def max_lco_amplitude(
-        self, panel, disp_history, last_cycles=2, chunk_size=100
-    ):
+    def max_lco_amplitude(self, disp_history, last_cycles=2, chunk_size=100):
         """Calculate the maximum LCO amplitude and its location.
 
         This function uses vectorized operations to compute the peak-to-peak
@@ -755,7 +759,6 @@ class Analysis:
         stabilized cycles at the end of the simulation.
 
         Args:
-            panel (Panel): The structural panel object.
             disp_history (ndarray): Displacement time history.
             last_cycles (int): Number of cycles from the end to use for
                                amplitude calculation. Defaults to 2.
@@ -766,7 +769,7 @@ class Analysis:
                 - max_value: Max normalized peak-to-peak amplitude (w/h).
                 - max_xi, max_eta: Natural coordinates of the max amplitude.
         """
-        h = panel.laminate.total_thickness
+        h = self.panel.laminate.total_thickness
         n_steps = disp_history.shape[1]
 
         # 1. Determine time window using a reference point (center of the mesh)
@@ -816,7 +819,7 @@ class Analysis:
             self.panel.mesh[max_idx, 1],
         )
 
-    def get_point_amplitude(self, panel, disp_history, coords, last_cycles=2):
+    def get_point_amplitude(self, disp_history, coords, last_cycles=2):
         """Calculate the LCO amplitude at specific natural coordinates.
 
         This function finds the closest mesh node to the provided (xi, eta)
@@ -825,7 +828,6 @@ class Analysis:
         specific location.
 
         Args:
-            panel (Panel): The structural panel object.
             disp_history (ndarray): Displacement time history.
             coords (tuple): Natural coordinates (xi, eta) of the target point.
             last_cycles (int): Number of cycles from the end to use for
@@ -837,7 +839,7 @@ class Analysis:
         Raises:
             ValueError: If 'coords' is not a tuple/list of length 2.
         """
-        h = panel.laminate.total_thickness
+        h = self.panel.laminate.total_thickness
         n_steps = disp_history.shape[1]
 
         # 2. Reconstruct displacement history for the target point

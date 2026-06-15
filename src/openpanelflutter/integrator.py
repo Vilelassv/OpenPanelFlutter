@@ -140,7 +140,7 @@ class Integrator:
 
             # Find the value of the first mode at point (0.5, 0)
             # This requires the basis functions (bdof) evaluated at the point
-            point = np.array([0.5, 0.0])
+            point = np.array([[0.5, 0.0]])
             # w component
             w_at_point = self.panel.get_displacement_at_points(point, 2, phi1)
 
