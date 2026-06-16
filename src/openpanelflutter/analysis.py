@@ -5,8 +5,6 @@ divergence analysis, and atmospheric property calculations for
 aerospace structures.
 """
 
-import multiprocessing as mp
-from functools import partial
 from timeit import default_timer as timer
 
 import matplotlib.pyplot as plt
@@ -17,56 +15,6 @@ from .definitions import apply_plot_style
 from .integrator import Integrator
 
 apply_plot_style()
-
-
-def _single_sim_worker(
-    lamb_val, obj, tf, dt, Nmodes, theta_flow, kind, solver_type, kwargs
-):
-    """Internal worker function for parallel processing."""
-    # This logic replicates the matrix assembly for a single lambda
-    m_mat = obj.panel.M_global
-    k_str = obj.panel.K_structural
-    c_str = obj.panel.C_structural
-
-    material = obj.panel.laminate.plies[0].material
-    h = obj.panel.laminate.total_thickness
-    E1 = material.E if hasattr(material, "E") else material.E1
-    nu12 = material.nu if hasattr(material, "nu") else material.nu12
-    nu21 = material.nu if hasattr(material, "nu") else material.nu21
-
-    ga = 0.01
-
-    D011 = E1 * h**3 / 12 / (1 - nu12 * nu21)
-    w0 = (D011 / (material.rho * h * obj.panel.a**4)) ** 0.5
-    chi = ((lamb_val * ga) ** 0.5) * D011 / (w0 * obj.panel.a**4)
-
-    kaer_combined = obj.panel._K_aer * np.cos(
-        theta_flow
-    ) + obj.panel._K_aery * np.sin(theta_flow)
-
-    k_tot = k_str + (lamb_val * D011 / (obj.panel.a**3)) * kaer_combined
-    c_tot = c_str + chi * obj.panel._C_caer
-
-    integ = Integrator(
-        obj.panel,
-        tf,
-        dt,
-        m_mat,
-        k_tot,
-        c_tot,
-        n_modes=Nmodes,
-        kind=kind,
-        **kwargs,
-    )
-
-    if solver_type.lower() == "gen_alpha":
-        integ.solve_gen_alpha()
-    else:
-        integ.solve_cdm()
-    return {
-        "displ": integ.displ,
-        "time": integ.time_array,
-    }
 
 
 class Analysis:
@@ -642,7 +590,7 @@ class Analysis:
         """Run post-flutter simulations with optional parallelization.
 
         Args:
-            lamb (float or list): Dynamic pressure parameter(s).
+            lamb (float): Dynamic pressure parameter(s).
             tf (float): Final time.
             dt (float): Time step.
             Nmodes (int): Number of modes for reduction.
@@ -650,105 +598,80 @@ class Analysis:
             kind (str): Reduction type ('NM' or 'AEM').
             **kwargs:
                 solver (str): 'CDM' (default) or 'gen_alpha'.
-                parallel (bool): If True, runs multiple lambdas in parallel.
-                num_proc (int): Number of processors to use.
         """
         solver_type = kwargs.get("solver", "CDM")
-        is_parallel = kwargs.get("parallel", False)
         if not hasattr(self.panel, "NLNL"):
             self.panel.init_nlin()
 
-        # Handle lambda as a list for parallel or single for loop
-        lamb_list = [lamb] if np.isscalar(lamb) else lamb
+        # Sequential execution
+        start = timer()
+        print("Simulating...")
 
-        if is_parallel and len(lamb_list) > 1:
-            # Security check for processors
-            max_proc = mp.cpu_count() - 1
-            requested_proc = kwargs.get("num_proc", max_proc)
-            n_proc = (
-                min(max_proc, requested_proc)
-                if requested_proc > 0
-                else max_proc
-            )
+        # This logic replicates the matrix assembly for a single lambda
+        m_mat = self.panel.M_global
+        k_str = self.panel.K_structural
+        c_str = self.panel.C_structural
 
-            start = timer()
-            print(
-                f"Parallel batch with {len(lamb_list)} cases, "
-                f"using {n_proc} processors. Simulating..."
-            )
-            mp.freeze_support()
+        material = self.panel.laminate.plies[0].material
+        h = self.panel.laminate.total_thickness
+        E1 = material.E if hasattr(material, "E") else material.E1
+        nu12 = material.nu if hasattr(material, "nu") else material.nu12
+        nu21 = material.nu if hasattr(material, "nu") else material.nu21
 
-            # Partial function to fix constant arguments
-            worker = partial(
-                _single_sim_worker,
-                obj=self,
-                tf=tf,
-                dt=dt,
-                Nmodes=Nmodes,
-                theta_flow=theta_flow,
-                kind=kind,
-                solver_type=solver_type,
-                kwargs=kwargs,
-            )
+        ga = 0.01
 
-            with mp.Pool(processes=n_proc) as pool:
-                results = pool.map(worker, lamb_list)
-            end = timer()
-            timedif = (end - start) / 60  # minutes
+        D011 = E1 * h**3 / 12 / (1 - nu12 * nu21)
+        w0 = (D011 / (material.rho * h * self.panel.a**4)) ** 0.5
+        chi = ((lamb * ga) ** 0.5) * D011 / (w0 * self.panel.a**4)
 
-            time_h = timedif // 60
+        kaer_combined = self.panel._K_aer * np.cos(
+            theta_flow
+        ) + self.panel._K_aery * np.sin(theta_flow)
 
-            remain = timedif % 60
+        k_tot = k_str + (lamb * D011 / (self.panel.a**3)) * kaer_combined
+        c_tot = c_str + chi * self.panel._C_caer
 
-            time_m = remain // 1
+        integ = Integrator(
+            self.panel,
+            tf,
+            dt,
+            m_mat,
+            k_tot,
+            c_tot,
+            n_modes=Nmodes,
+            kind=kind,
+            **kwargs,
+        )
 
-            time_s = round((remain % 1) * 60)
-
-            print(
-                "Finished, Total Elapsed Time: ",
-                "%d h %d m % d s" % (time_h, time_m, time_s),
-            )
+        if solver_type.lower() == "gen_alpha":
+            integ.solve_gen_alpha()
         else:
-            # Sequential execution
-            start = timer()
-            print(f"Serial batch with {len(lamb_list)} cases. Simulating...")
-            results = [
-                self._single_sim_worker(
-                    lamb,
-                    self,
-                    tf,
-                    dt,
-                    Nmodes,
-                    theta_flow,
-                    kind,
-                    solver_type,
-                    kwargs,
-                )
-                for lamb in lamb_list
-            ]
-            end = timer()
-            timedif = (end - start) / 60  # minutes
+            integ.solve_cdm()
+        result = {
+            "displ": integ.displ,
+            "time": integ.time_array,
+        }
 
-            time_h = timedif // 60
+        end = timer()
+        timedif = (end - start) / 60  # minutes
 
-            remain = timedif % 60
+        time_h = timedif // 60
 
-            time_m = remain // 1
+        remain = timedif % 60
 
-            time_s = round((remain % 1) * 60)
+        time_m = remain // 1
 
-            print(
-                "Finished, Total Elapsed Time: ",
-                "%d h %d m % d s" % (time_h, time_m, time_s),
-            )
-        self.results = results
-        wA = np.zeros(shape=(len(results),))
-        wA_p = np.zeros(shape=(len(results),))
-        for kr, result in enumerate(results):
-            wA[kr], _, _ = self.max_lco_amplitude(result.get("displ"))
-            wA_p[kr] = self.get_point_amplitude(
-                result.get("displ"), np.array([[0.5, 0.0]])
-            )
+        time_s = round((remain % 1) * 60)
+
+        print(
+            "Finished, Total Elapsed Time: ",
+            "%d h %d m % d s" % (time_h, time_m, time_s),
+        )
+
+        wA, _, _ = self.max_lco_amplitude(result.get("displ"))
+        wA_p = self.get_point_amplitude(
+            result.get("displ"), np.array([[0.5, 0.0]])
+        )
         return wA, wA_p
 
     def max_lco_amplitude(self, disp_history, last_cycles=2, chunk_size=100):

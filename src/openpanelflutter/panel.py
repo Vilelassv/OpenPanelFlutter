@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.linalg as la
 from matplotlib import cm
+from numba import njit
 
 from .basis_functions import Function
 from .boundary import get_bardell_indices
@@ -1553,19 +1554,7 @@ class Panel:
         len_nl = int((len_w + 1) * len_w / 2)
 
         # Nu3bar maps u3 to the non-linear vector space
-        Nu3bar = np.zeros((len_nl, len_w))
-
-        # Fill diagonal components (u_i * u_i terms)
-        Nu3bar[:len_w, :] = np.diag(u3[:, 0])
-
-        # Fill cross-product terms (u_i * u_j terms)
-        for kk, uu in enumerate(u3):
-            start = int((1 + kk) * len_w - (1 + kk) * kk / 2)
-            end = int((2 + kk) * len_w - (1 + kk) * (2 + kk) / 2)
-
-            # Triangular interaction mapping
-            Nu3bar[start:end, kk] = 0.5 * u3[kk + 1 :, 0]
-            Nu3bar[start:end, kk + 1 :] = 0.5 * uu * np.eye(len_w - (1 + kk))
+        Nu3bar = _assemble_nu3bar_numba(u3, len_w, len_nl)
 
         # Assemble global mapping matrix
         Nu3q = np.zeros((len_nl, self.len_tot))
@@ -1590,3 +1579,54 @@ class Panel:
             F_stf += stf.compute_nl(ut)
 
         return FNL + F_acp + F_stf
+
+
+@njit(cache=True)
+def _assemble_nu3bar_numba(u3, len_w, len_nl):
+    """Assemble non-linear displacement mapping matrix Nu3bar with Numba.
+
+    This function maps the transverse displacement degrees of freedom (u3)
+    into a higher-dimensional non-linear vector space to account for the
+    Von Karman strain components. It optimizes the triangular interaction
+    mapping using compiled loops for maximum execution speed within the
+    time integration cycle.
+
+    Args:
+        u3 : ndarray
+            Transverse displacement (generalized) at current step.
+        len_w : int
+            Number of transverse basis functions (for w).
+        len_nl : int
+            Size of the non-linear vector.
+
+    Returns:
+        ndarray
+            The compiled mapping matrix Nu3bar of shape (len_nl, len_w).
+    """
+    # Allocate the matrix in memory using native C-ordering
+    nu3bar = np.zeros((len_nl, len_w))
+
+    # Fill diagonal components corresponding to (u_i * u_i) terms
+    for i in range(len_w):
+        nu3bar[i, i] = u3[i, 0]
+
+    # Fill cross-product components corresponding to (u_i * u_j) terms
+    for kk in range(len_w):
+        uu = u3[kk, 0]
+
+        # Calculate triangular indexing bounds for the current row block
+        start = int((1 + kk) * len_w - (1 + kk) * kk / 2)
+        end = int((2 + kk) * len_w - (1 + kk) * (2 + kk) / 2)
+
+        # Iterate over the sub-block to replace original NumPy slicing
+        # and avoid dynamic eye matrix allocation
+        idx_count = 0
+        for row in range(start, end):
+            # Map the interaction of the primary mode
+            nu3bar[row, kk] = 0.5 * u3[kk + 1 + idx_count, 0]
+
+            # Map the interaction of coupled modes (0.5 * uu * np.eye)
+            nu3bar[row, kk + 1 + idx_count] = 0.5 * uu
+            idx_count += 1
+
+    return nu3bar

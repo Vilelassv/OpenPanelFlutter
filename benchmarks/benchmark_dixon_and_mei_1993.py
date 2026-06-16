@@ -7,6 +7,9 @@ and Tsunematsu et al (2021) available at
 https://doi.org/https://doi.org/10.1016/j.tws.2021.107964.
 """
 
+import copy
+import multiprocessing as mp
+from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -83,9 +86,7 @@ def print_terminal_summary_critical(lambda_cr):
     err_rel_ts = (err_abs_ts / ref_lambda_ts) * 100
 
     print("\n" + "=" * 94)
-    print(
-        " TABLE 1: CRITICAL AERODYNAMIC PRESSURE PARAMETER (λ_crit) COMPARISON"
-    )
+    print(" CRITICAL AERODYNAMIC PRESSURE PARAMETER (λ_crit) COMPARISON")
     print("=" * 94)
     print(
         f"{'Source':<25} | {'λ_crit':<10} | {'Abs. Error':<12} |"
@@ -114,9 +115,6 @@ def print_terminal_summary_critical(lambda_cr):
 
 def print_terminal_summary_amplitude(my_amplitudes):
     """Print a verification matrix block directly to the stdout terminal."""
-    # =========================================================================
-    # TABLE 2: NON-DIMENSIONAL AMPLITUDE COMPARISON (Values > 0)
-    # =========================================================================
     print("")
     print("=" * 108)
     print(" NON-DIMENSIONAL LCO AMPLITUDE COMPARISON")
@@ -158,6 +156,18 @@ def print_terminal_summary_amplitude(my_amplitudes):
     print("")
 
 
+def _single_simulation_worker(
+    lamb_value,
+    panel_template,
+    delta_t,
+    t_end,
+):
+    local_panel = copy.deepcopy(panel_template)
+    analyses = Analysis(local_panel)
+
+    return analyses.post_flutter_sim(lamb_value, t_end, delta_t, -1)
+
+
 def run_simulations(
     n_func,
     lambdas,
@@ -187,9 +197,43 @@ def run_simulations(
     analyses.identify_flutter()
     print_terminal_summary_critical(analyses.lamb_cr_interp)
 
-    max_amp, local_amp = analyses.post_flutter_sim(
-        lambdas, t_end, delta_t, -1, parallel=parallel, num_proc=4
-    )
+    panel_template = copy.deepcopy(panel)
+
+    if parallel:
+        worker = partial(
+            _single_simulation_worker,
+            panel_template=panel_template,
+            t_end=t_end,
+            delta_t=delta_t,
+        )
+
+        # Security check for processors
+        max_proc = mp.cpu_count() - 1
+        requested_proc = num_proc
+        n_proc = (
+            min(max_proc, requested_proc) if requested_proc > 0 else max_proc
+        )
+
+        print(
+            f"Parallel batch with {len(lambdas)} cases, "
+            f"using {n_proc} processors:"
+        )
+
+        with mp.Pool(processes=n_proc) as pool:
+            results = pool.map(worker, lambdas)
+    else:
+        print(f"Serial batch with {len(lambdas)} cases: ")
+        results = [
+            _single_simulation_worker(
+                lamb,
+                panel_template,
+                delta_t,
+                t_end,
+            )
+            for lamb in lambdas
+        ]
+
+    _, local_amp = map(np.array, zip(*results))
 
     print_terminal_summary_amplitude(local_amp)
 
@@ -242,6 +286,7 @@ def run_simulations(
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     # Execute benchmark case
     run_simulations(
         n_func=6,
@@ -250,6 +295,6 @@ if __name__ == "__main__":
         ],
         delta_t=1e-6,
         t_end=0.1,
-        parallel=True,
+        parallel=False,
         save_figures=True,
     )
