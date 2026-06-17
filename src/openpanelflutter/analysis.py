@@ -649,6 +649,7 @@ class Analysis:
             integ.solve_cdm()
         result = {
             "displ": integ.displ,
+            "veloc": integ.veloc,
             "time": integ.time_array,
         }
 
@@ -672,7 +673,13 @@ class Analysis:
         wA_p = self.get_point_amplitude(
             result.get("displ"), np.array([[0.5, 0.0]])
         )
-        return wA, wA_p
+        return (
+            wA,
+            wA_p,
+            result.get("time"),
+            result.get("displ"),
+            result.get("veloc"),
+        )
 
     def max_lco_amplitude(self, disp_history, last_cycles=2, chunk_size=100):
         """Calculate the maximum LCO amplitude and its location.

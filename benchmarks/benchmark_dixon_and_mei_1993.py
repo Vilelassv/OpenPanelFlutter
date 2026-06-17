@@ -284,7 +284,7 @@ def run_simulations(
             for lamb in lambdas
         ]
 
-    _, local_amp = map(np.array, zip(*results))
+    _, local_amp, _, _, _ = map(np.array, zip(*results))
 
     print("\n" + "Post-critical analysis: ", end="")
     print_terminal_summary_amplitude(local_amp)
@@ -332,7 +332,31 @@ def run_simulations(
         plt.savefig(
             str(output_dir / "limit_cycle_DixonMei.pdf"), bbox_inches="tight"
         )
-    else:
+
+    for kr, result in enumerate(results):
+        h = panel.laminate.total_thickness
+        _, _, time, qt, dqt_dt = result
+        ws = (
+            analyses.panel.get_displacement_at_points(
+                np.array([[0.5, 0.0]]), 2, qt
+            )
+            / h
+        )
+
+        plt.figure(kr + 2, figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
+        plt.plot(time, ws, "b")
+        plt.gca().grid(
+            visible=True, which="both", linestyle=":", linewidth=0.5
+        )
+        plt.ylabel("$w$ $[-]$", fontsize=10)
+        plt.xlabel("Time $[s]$", fontsize=10)
+        plt.title(rf"$@ (\xi,\eta)=(0.5,0)$: $\lambda={lambdas[kr]:.2f}$")
+        if save_figures:
+            plt.savefig(
+                str(output_dir / f"w_lambda_{lambdas[kr]:d}.pdf"),
+                bbox_inches="tight",
+            )
+    if not save_figures:
         plt.show()
 
 
@@ -346,6 +370,6 @@ if __name__ == "__main__":
         ],
         delta_t=1e-6,
         t_end=0.1,
-        parallel=True,
+        parallel=False,
         save_figures=True,
     )
