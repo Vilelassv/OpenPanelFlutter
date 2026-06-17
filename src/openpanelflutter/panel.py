@@ -1543,90 +1543,103 @@ class Panel:
         Returns:
             ndarray: The non-linear internal force vector.
         """
-        len_u, len_v, len_w = (
+        # Call the high-performance Numba function for the core panel physics
+        f_panel = _panel_core_nl_numba(
+            ut,
+            self.NLNL,
+            self.kNL,
+            self.eNL,
+            self.NLk,
+            self.NLe,
             len(self.base_u),
             len(self.base_v),
             len(self.base_w),
-        )
-
-        # Extract transverse displacement degrees of freedom
-        u3 = ut[len_u + len_v : len_u + len_v + len_w]
-        len_nl = int((len_w + 1) * len_w / 2)
-
-        # Nu3bar maps u3 to the non-linear vector space
-        Nu3bar = _assemble_nu3bar_numba(u3, len_w, len_nl)
-
-        # Assemble global mapping matrix
-        Nu3q = np.zeros((len_nl, self.len_tot))
-        Nu3q[:, len_u + len_v : len_u + len_v + len_w] = Nu3bar
-
-        # Purely non-linear force (cubic in displacement)
-        # FNL = {q}^T * [NLNL] * {q}
-        FNL = Nu3q.T @ self.NLNL @ Nu3q @ ut
-
-        # Membrane-Bending coupling forces (A-B coupling)
-        # Includes curvature and membrane interactions
-        F_acp = (
-            (self.kNL @ Nu3q @ ut)
-            + (self.eNL @ Nu3q @ ut)
-            + (Nu3q.T @ self.NLk @ ut)
-            + (Nu3q.T @ self.NLe @ ut)
+            self.len_tot,
         )
 
         # Stiffener contributions
-        F_stf = np.zeros_like(FNL)
+        f_stf = np.zeros_like(f_panel)
         for stf in self.stiffeners:
-            F_stf += stf.compute_nl(ut)
+            f_stf += stf.compute_nl(ut)
 
-        return FNL + F_acp + F_stf
+        return f_panel + f_stf
 
 
 @njit(cache=True)
-def _assemble_nu3bar_numba(u3, len_w, len_nl):
-    """Assemble non-linear displacement mapping matrix Nu3bar with Numba.
+def _panel_core_nl_numba(
+    ut, nlnl, knl, enl, nlk, nle, len_u, len_v, len_w, len_tot
+):
+    """Compute the geometric non-linear and coupling forces using Numba.
 
-    This function maps the transverse displacement degrees of freedom (u3)
-    into a higher-dimensional non-linear vector space to account for the
-    Von Karman strain components. It optimizes the triangular interaction
-    mapping using compiled loops for maximum execution speed within the
-    time integration cycle.
+    This function isolates the heavy tensor contractions and triangular
+    mappings of the Von Karman strains from the Python class scope. It runs
+    in native machine speed and utilizes Numba's compiled loops to eliminate
+    the overhead of repetitive matrix allocations.
 
     Args:
-        u3 : ndarray
-            Transverse displacement (generalized) at current step.
+        ut : ndarray
+            Generalized displacement vector at the current time step.
+        nlnl : ndarray
+            Pre-computed purely non-linear stiffness matrix.
+        knl: ndarray
+            Pre-computed coupling matrices.
+        enl: ndarray
+            Pre-computed coupling matrices.
+        nlk: ndarray
+            Pre-computed coupling matrices.
+        nle: ndarray
+            Pre-computed coupling matrices.
+        len_u : int
+            Number of degrees of freedom for u-displacement.
+        len_v : int
+            Number of degrees of freedom for v-displacement.
         len_w : int
-            Number of transverse basis functions (for w).
-        len_nl : int
-            Size of the non-linear vector.
+            Number of degrees of freedom for w-displacement.
+        len_tot: int
+            Total number of degrees of freedom
 
     Returns:
         ndarray
-            The compiled mapping matrix Nu3bar of shape (len_nl, len_w).
+            The compiled baseline non-linear force vector for the panel.
     """
-    # Allocate the matrix in memory using native C-ordering
-    nu3bar = np.zeros((len_nl, len_w))
+    len_nl = int((len_w + 1) * len_w / 2)
 
-    # Fill diagonal components corresponding to (u_i * u_i) terms
+    # Extract transverse displacement degrees of freedom
+    u3 = ut[len_u + len_v : len_u + len_v + len_w]
+
+    # Nu3bar maps u3 to the non-linear vector space
+    Nu3bar = np.zeros((len_nl, len_w))
+
+    # Fill diagonal components (u_i * u_i terms)
     for i in range(len_w):
-        nu3bar[i, i] = u3[i, 0]
+        Nu3bar[i, i] = u3[i, 0]
 
-    # Fill cross-product components corresponding to (u_i * u_j) terms
+    # Fill cross-product terms (u_i * u_j terms) - Replaces np.eye and np.diag
     for kk in range(len_w):
         uu = u3[kk, 0]
-
-        # Calculate triangular indexing bounds for the current row block
         start = int((1 + kk) * len_w - (1 + kk) * kk / 2)
         end = int((2 + kk) * len_w - (1 + kk) * (2 + kk) / 2)
 
-        # Iterate over the sub-block to replace original NumPy slicing
-        # and avoid dynamic eye matrix allocation
+        # Triangular interaction mapping executed via compiled loops
         idx_count = 0
         for row in range(start, end):
-            # Map the interaction of the primary mode
-            nu3bar[row, kk] = 0.5 * u3[kk + 1 + idx_count, 0]
-
-            # Map the interaction of coupled modes (0.5 * uu * np.eye)
-            nu3bar[row, kk + 1 + idx_count] = 0.5 * uu
+            Nu3bar[row, kk] = 0.5 * u3[kk + 1 + idx_count, 0]
+            Nu3bar[row, kk + 1 + idx_count] = 0.5 * uu
             idx_count += 1
 
-    return nu3bar
+    # Assemble global mapping matrix
+    Nu3q = np.zeros((len_nl, len_tot))
+    Nu3q[:, len_u + len_v : len_u + len_v + len_w] = Nu3bar
+
+    # Purely non-linear force
+    fnl = Nu3q.T @ (nlnl @ (Nu3q @ ut))
+
+    # Coupling forces
+    f_acp = (
+        (knl @ (Nu3q @ ut))
+        + (enl @ (Nu3q @ ut))
+        + (Nu3q.T @ (nlk @ ut))
+        + (Nu3q.T @ (nle @ ut))
+    )
+
+    return fnl + f_acp

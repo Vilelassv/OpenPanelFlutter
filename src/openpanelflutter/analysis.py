@@ -605,7 +605,7 @@ class Analysis:
 
         # Sequential execution
         start = timer()
-        print("Simulating...")
+        print(f"Simulating λ: {lamb:<6.1f}...")
 
         # This logic replicates the matrix assembly for a single lambda
         m_mat = self.panel.M_global
@@ -664,7 +664,7 @@ class Analysis:
         time_s = round((remain % 1) * 60)
 
         print(
-            "Finished, Total Elapsed Time: ",
+            "Finished. Simulation Elapsed Time: ",
             "%d h %d m % d s" % (time_h, time_m, time_s),
         )
 
