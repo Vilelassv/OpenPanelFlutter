@@ -72,6 +72,43 @@ LAMINATE.add_stack(
 )
 
 
+def print_simulation_setup(
+    n_func,
+    lambdas,
+    delta_t,
+    t_end,
+    theory,
+    boundary_conditions,
+    basis_type,
+    n_gauss,
+    parallel,
+    n_proc=None,
+):
+    """Print a summary of the simulation configuration."""
+    print("\n" + "=" * 80)
+    print(" SIMULATION RUNTIME SETUP & CONFIGURATION")
+    print("=" * 80)
+    print(f" {'Structural Theory':<25} : {theory.name}")
+    print(f" {'Boundary Conditions':<25} : {boundary_conditions.name}")
+    print(f" {'Basis Function Type':<25} : {basis_type.name}")
+    print(f" {'Number of Functions':<25} : {n_func}")
+    print(f" {'Gauss Quadrature Points':<25} : {n_gauss}")
+    print("-" * 80)
+    print(f" {'Time Step (dt)':<25} : {delta_t:.1e} s")
+    print(f" {'Final Time (t_end)':<25} : {t_end:<5.2f} s")
+    print(f" {'Total Steps per Case':<25} : {int(t_end / delta_t):,}")
+    print(f" {'Cases (λ)':<25} : {len(lambdas)} cases {list(lambdas)}")
+    print("-" * 80)
+
+    if parallel:
+        print(f" {'Execution Mode':<25} : PARALLEL BATCH")
+        print(f" {'Processors Allocated':<25} : {n_proc}")
+    else:
+        print(f" {'Execution Mode':<25} : SERIAL BATCH")
+
+    print("=" * 80 + "\n")
+
+
 def print_terminal_summary_critical(lambda_cr):
     """Print an verification matrix block directly to the stdout terminal."""
     # Extract references for Table 1 (First key represents lambda_crit)
@@ -191,6 +228,20 @@ def run_simulations(
         boundary_conditions=boundary_conditions,
         n_gauss=n_gauss,
     )
+
+    print_simulation_setup(
+        n_func,
+        lambdas,
+        delta_t,
+        t_end,
+        theory,
+        boundary_conditions,
+        basis_type,
+        panel.n_gauss,
+        parallel,
+        num_proc,
+    )
+
     analyses = Analysis(panel)
     print("Flutter analysis: ", end="")
     analyses.run_lambda_sweep(lambda_min=160, lambda_max=165, n_points=200)
@@ -235,6 +286,7 @@ def run_simulations(
 
     _, local_amp = map(np.array, zip(*results))
 
+    print("\n" + "Post-critical analysis: ", end="")
     print_terminal_summary_amplitude(local_amp)
 
     lambdas_sim = np.insert(lambdas, 0, analyses.lamb_cr_interp)
@@ -246,7 +298,7 @@ def run_simulations(
         list(TSUNEMATSU_DATABASE.values()),
         "--^b",
         markersize=3.5,
-        label=r"Tsunematsu \it{et al.} (2021)",
+        label=r"Tsunematsu et al. (2021)",
     )
     plt.plot(
         list(DIXON_MEI_DATABASE.keys()),
@@ -273,7 +325,6 @@ def run_simulations(
     plt.ylabel("$w_A$ $[-]$", fontsize=10)
     plt.xlabel(r"$\lambda$ $[-]$", fontsize=10)
     plt.xlim([160, 290])
-    plt.ylim([-0.05, 1.05])
     if save_figures:
         output_dir = CURRENT_DIR / "figures" / "compare_Dixon_Mei"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -295,6 +346,6 @@ if __name__ == "__main__":
         ],
         delta_t=1e-6,
         t_end=0.1,
-        parallel=False,
+        parallel=True,
         save_figures=True,
     )

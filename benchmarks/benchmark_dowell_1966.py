@@ -7,6 +7,9 @@ Tsunematsu et al (2021) available at
 https://doi.org/https://doi.org/10.1016/j.tws.2021.107964.
 """
 
+import copy
+import multiprocessing as mp
+from functools import partial
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -57,6 +60,57 @@ LAMINATE = Laminate("Laminate")
 LAMINATE.add_stack(MAT_REF, thicknesses=2e-3)
 
 
+def print_simulation_setup(
+    n_func,
+    lambdas,
+    delta_t,
+    t_end,
+    theory,
+    boundary_conditions,
+    basis_type,
+    n_gauss,
+    parallel,
+    n_proc=None,
+):
+    """Print a summary of the simulation configuration.
+
+    Dynamically omits the boundary condition display if the basis type
+    implicitly defines it (e.g., SINES implying SSSS).
+    """
+    print("\n" + "=" * 80)
+    print(" SIMULATION RUNTIME SETUP & CONFIGURATION")
+    print("=" * 80)
+    print(f" {'Structural Theory':<25} : {theory.name}")
+
+    # Only print Boundary Conditions if the basis type requires
+    # definition (e.g., BARDELL)
+    if basis_type.name == "BARDELL":
+        print(f" {'Boundary Conditions':<25} : {boundary_conditions.name}")
+    else:
+        print(
+            f" {'Boundary Conditions':<25} : [Implicitly Defined by"
+            f" {basis_type.name}]"
+        )
+
+    print(f" {'Basis Function Type':<25} : {basis_type.name}")
+    print(f" {'Approximation Functions':<25} : {n_func}")
+    print(f" {'Gauss Quadrature Points':<25} : {n_gauss}")
+    print("-" * 80)
+    print(f" {'Time Step (dt)':<25} : {delta_t:.1e} s")
+    print(f" {'Final Time (t_end)':<25} : {t_end:<5.2f} s")
+    print(f" {'Total Steps per Case':<25} : {int(t_end / delta_t):,}")
+    print(f" {'Cases (λ)':<25} : {len(lambdas)} cases {list(lambdas)}")
+    print("-" * 80)
+
+    if parallel:
+        print(f" {'Execution Mode':<25} : PARALLEL BATCH")
+        print(f" {'Processors Allocated':<25} : {n_proc}")
+    else:
+        print(f" {'Execution Mode':<25} : SERIAL BATCH")
+
+    print("=" * 80 + "\n")
+
+
 def print_terminal_summary_critical(lambda_cr):
     """Print an verification matrix block directly to the stdout terminal."""
     # Extract references for Table 1 (First key represents lambda_crit)
@@ -70,34 +124,85 @@ def print_terminal_summary_critical(lambda_cr):
     err_abs_ts = lambda_cr - ref_lambda_ts
     err_rel_ts = (err_abs_ts / ref_lambda_ts) * 100
 
-    print("\n" + "=" * 80)
-    print(
-        " TABLE 1: CRITICAL AERODYNAMIC PRESSURE PARAMETER (λ_crit) COMPARISON"
-    )
-    print("=" * 80)
+    print("\n" + "=" * 94)
+    print(" CRITICAL AERODYNAMIC PRESSURE PARAMETER (λ_crit) COMPARISON")
+    print("=" * 94)
     print(
         f"{'Source':<25} | {'λ_crit':<10} | {'Abs. Error':<12} |"
         f" {'Rel. Error (%)':<15}"
     )
-    print("-" * 80)
+    print("-" * 94)
     print(
-        f"{'Dixon & Mei (1993)':<25} |"
+        f"{'Dowell (1966)':<25} |"
         f" {ref_lambda_dm:<10.2f} | {'-':<12} | {'-':<15}"
     )
     print(
         f"{'Tsunematsu et al. (2021)':<25} |"
         f" {ref_lambda_ts:<10.2f} | {'-':<12} | {'-':<15}"
     )
-    print("-" * 80)
+    print("-" * 94)
     print(
         f"{'Present Work':<25} | {lambda_cr:<10.2f} |"
-        f" {err_abs_dm:<+12.2f} | {err_rel_dm:<+15.2f} (vs DM)"
+        f" {err_abs_dm:<+12.2f} | {err_rel_dm:<+15.2f} (vs Dowell)"
     )
     print(
         f"{'':<25} | {'':<10} | {err_abs_ts:<+12.2f} |"
-        f" {err_rel_ts:<+15.2f} (vs TS)"
+        f" {err_rel_ts:<+15.2f} (vs Tsunematsu et al.)"
     )
-    print("=" * 80 + "\n")
+    print("=" * 94 + "\n")
+
+
+def print_terminal_summary_amplitude(my_amplitudes):
+    """Print a verification matrix block directly to the stdout terminal."""
+    print("\n" + "=" * 108)
+    print(" NON-DIMENSIONAL LCO AMPLITUDE COMPARISON")
+    print("=" * 108)
+    # Present Work || Dowell || Tsunematsu Block
+    header = (
+        f"{'λ':<6} | {'Present Work':<13} || "
+        f"{'Dowell':<14} | {'Abs. Err.':<10} | {'% Err.':<8} || "
+        f"{'Tsunematsu et al.':<18} | {'Abs. Err.':<10} | {'% Err.':<8}"
+    )
+    print(header)
+    print("-" * 108)
+
+    # Filter keys where reference values are strictly greater than zero
+    active_lambdas = [k for k, v in DOWELL_DATABASE.items() if v > 0.0]
+
+    for kl, lam in enumerate(active_lambdas):
+        val_dw = DOWELL_DATABASE[lam]
+        val_ts = TSUNEMATSU_DATABASE[lam]
+        val_my = my_amplitudes[kl]
+
+        # Compute amplitude errors for Dowell
+        amp_abs_err_dw = val_my - val_dw
+        amp_rel_err_dw = (amp_abs_err_dw / val_dw) * 100 if val_dw > 0 else 0.0
+
+        # Compute amplitude errors for Tsunematsu et al.
+        amp_abs_err_ts = val_my - val_ts
+        amp_rel_err_ts = (amp_abs_err_ts / val_ts) * 100 if val_ts > 0 else 0.0
+
+        # Row print aligned dynamically with the specified header boundaries
+        print(
+            f"{lam:<6} | {val_my:<13.4f} || "
+            f"{val_dw:<14.4f} | {amp_abs_err_dw:<+10.4f} |"
+            f" {amp_rel_err_dw:<+8.2f} || "
+            f"{val_ts:<18.4f} | {amp_abs_err_ts:<+10.4f} |"
+            f" {amp_rel_err_ts:<+8.2f}"
+        )
+    print("=" * 108 + "\n")
+
+
+def _single_simulation_worker(
+    lamb_value,
+    panel_template,
+    delta_t,
+    t_end,
+):
+    local_panel = copy.deepcopy(panel_template)
+    analyses = Analysis(local_panel)
+
+    return analyses.post_flutter_sim(lamb_value, t_end, delta_t, -1)
 
 
 def run_simulations(
@@ -123,15 +228,66 @@ def run_simulations(
         boundary_conditions=boundary_conditions,
         n_gauss=n_gauss,
     )
+
+    print_simulation_setup(
+        n_func,
+        lambdas,
+        delta_t,
+        t_end,
+        theory,
+        boundary_conditions,
+        basis_type,
+        panel.n_gauss,
+        parallel,
+        num_proc,
+    )
+
     analyses = Analysis(panel)
     print("Flutter analysis: ", end="")
-    analyses.run_lambda_sweep(lambda_min=510, lambda_max=515, n_points=200)
+    analyses.run_lambda_sweep(lambda_min=450, lambda_max=550, n_points=200)
     analyses.identify_flutter()
     print_terminal_summary_critical(analyses.lamb_cr_interp)
 
-    max_amp, local_amp = analyses.post_flutter_sim(
-        lambdas, t_end, delta_t, -1, parallel=parallel, num_proc=4
-    )
+    panel_template = copy.deepcopy(panel)
+
+    if parallel:
+        worker = partial(
+            _single_simulation_worker,
+            panel_template=panel_template,
+            t_end=t_end,
+            delta_t=delta_t,
+        )
+
+        # Security check for processors
+        max_proc = mp.cpu_count() - 1
+        requested_proc = num_proc
+        n_proc = (
+            min(max_proc, requested_proc) if requested_proc > 0 else max_proc
+        )
+
+        print(
+            f"Parallel batch with {len(lambdas)} cases, "
+            f"using {n_proc} processors:"
+        )
+
+        with mp.Pool(processes=n_proc) as pool:
+            results = pool.map(worker, lambdas)
+    else:
+        print(f"Serial batch with {len(lambdas)} cases: ")
+        results = [
+            _single_simulation_worker(
+                lamb,
+                panel_template,
+                delta_t,
+                t_end,
+            )
+            for lamb in lambdas
+        ]
+
+    _, local_amp = map(np.array, zip(*results))
+
+    print("\n" + "Post-critical analysis: ", end="")
+    print_terminal_summary_amplitude(local_amp)
 
     lambdas_sim = np.insert(lambdas, 0, analyses.lamb_cr_interp)
     local_amp_sim = np.insert(local_amp, 0, 0)
@@ -142,7 +298,7 @@ def run_simulations(
         list(TSUNEMATSU_DATABASE.values()),
         "--^b",
         markersize=3.5,
-        label=r"Tsunematsu \it{et al.} (2021)",
+        label=r"Tsunematsu et al. (2021)",
     )
     plt.plot(
         list(DOWELL_DATABASE.keys()),
@@ -169,16 +325,28 @@ def run_simulations(
     plt.ylabel("$w_A$ $[-]$", fontsize=10)
     plt.xlabel(r"$\lambda$ $[-]$", fontsize=10)
     plt.xlim([500, 1050])
-    plt.ylim([-0.05, 1.4])
-    plt.show()
+    if save_figures:
+        output_dir = CURRENT_DIR / "figures" / "compare_Dowell"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        plt.savefig(
+            str(output_dir / "limit_cycle_Dowell.pdf"), bbox_inches="tight"
+        )
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":
+    mp.freeze_support()
     # Execute benchmark case
     run_simulations(
-        n_func=7,
+        n_func=5,
+        basis_type=BasisFunction.SINES,
+        theory=StructuralTheory.KIRCHHOFF,
+        n_gauss=15,
         lambdas=[key for key, value in DOWELL_DATABASE.items() if value > 0.0],
         delta_t=1e-7,
         t_end=0.2,
-        parallel=False,
+        parallel=True,
+        save_figures=True,
     )
