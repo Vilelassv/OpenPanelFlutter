@@ -651,6 +651,7 @@ class Analysis:
             "displ": integ.displ,
             "veloc": integ.veloc,
             "time": integ.time_array,
+            "fnl": integ.f_ext,
         }
 
         end = timer()
@@ -669,7 +670,7 @@ class Analysis:
             "%d h %d m % d s" % (time_h, time_m, time_s),
         )
 
-        wA, _, _ = self.max_lco_amplitude(result.get("displ"))
+        wA, _, _ = self.max_lco_amplitude(result.get("displ"), last_cycles=5)
         wA_p = self.get_point_amplitude(
             result.get("displ"), np.array([[0.5, 0.0]])
         )
@@ -679,6 +680,7 @@ class Analysis:
             result.get("time"),
             result.get("displ"),
             result.get("veloc"),
+            result.get("fnl"),
         )
 
     def max_lco_amplitude(self, disp_history, last_cycles=2, chunk_size=100):

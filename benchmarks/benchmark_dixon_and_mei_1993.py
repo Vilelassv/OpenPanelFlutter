@@ -242,6 +242,14 @@ def run_simulations(
         num_proc,
     )
 
+    # Parameters for nondimensional results
+    h = panel.laminate.total_thickness
+    E1 = AS4_PEEK.E if hasattr(AS4_PEEK, "E") else AS4_PEEK.nu21
+    nu12 = AS4_PEEK.nu if hasattr(AS4_PEEK, "nu") else AS4_PEEK.nu12
+    nu21 = AS4_PEEK.nu if hasattr(AS4_PEEK, "nu") else AS4_PEEK.nu21
+    D011 = E1 * h**3 / 12 / (1 - nu12 * nu21)
+    w0 = (D011 / (AS4_PEEK.rho * h * panel.a**4)) ** 0.5
+
     analyses = Analysis(panel)
     print("Flutter analysis: ", end="")
     analyses.run_lambda_sweep(lambda_min=160, lambda_max=165, n_points=200)
@@ -284,7 +292,7 @@ def run_simulations(
             for lamb in lambdas
         ]
 
-    _, local_amp, _, _, _ = map(np.array, zip(*results))
+    _, local_amp, _, _, _, _ = map(np.array, zip(*results))
 
     print("\n" + "Post-critical analysis: ", end="")
     print_terminal_summary_amplitude(local_amp)
@@ -335,7 +343,7 @@ def run_simulations(
 
     for kr, result in enumerate(results):
         h = panel.laminate.total_thickness
-        _, _, time, qt, dqt_dt = result
+        _, _, time, qt, dqt_dt, fnl = result
         ws = (
             analyses.panel.get_displacement_at_points(
                 np.array([[0.5, 0.0]]), 2, qt
@@ -343,7 +351,11 @@ def run_simulations(
             / h
         )
 
-        plt.figure(kr + 2, figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
+        wps = analyses.panel.get_displacement_at_points(
+            np.array([[0.5, 0.0]]), 2, dqt_dt
+        ) / (h * w0)
+
+        plt.figure(kr * 3 + 2, figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
         plt.plot(time, ws, "b")
         plt.gca().grid(
             visible=True, which="both", linestyle=":", linewidth=0.5
@@ -356,6 +368,93 @@ def run_simulations(
                 str(output_dir / f"w_lambda_{lambdas[kr]:d}.pdf"),
                 bbox_inches="tight",
             )
+
+        U = 0.5 * np.einsum("ij,ji->i", qt.T, panel.K_structural @ qt - fnl)
+        Ubar = U / D011 / ((h / panel.a) ** 2)
+        timebar = time * w0
+
+        T = 0.5 * np.einsum("ij,ji->i", dqt_dt.T, panel.M_global @ dqt_dt)
+        Tbar = T / D011 / ((h / panel.a) ** 2)
+
+        Lbar = Tbar - Ubar
+        Ebar = Ubar + Tbar
+
+        fig = plt.figure(
+            kr * 3 + 3, figsize=(FIGWIDTH, 2 * FIGHEIGHT), dpi=300
+        )
+        ax = fig.add_subplot(4, 1, 1)
+        ax.plot(timebar, Ubar, "-k", linewidth=0.5)
+        ax.grid(visible=True, which="both", linestyle=":", linewidth=0.5)
+        ax.set_ylabel(r"$\overline{U}$ $[-]$", fontsize=10)
+        plt.setp(ax.get_xticklabels(), visible=False)
+
+        ax = fig.add_subplot(4, 1, 2)
+        ax.plot(timebar, Tbar, "-k", linewidth=0.5)
+        ax.grid(visible=True, which="both", linestyle=":", linewidth=0.5)
+        ax.set_ylabel(r"$\overline{T}$ $[-]$", fontsize=10)
+        plt.setp(ax.get_xticklabels(), visible=False)
+
+        ax = fig.add_subplot(4, 1, 3)
+        ax.plot(timebar, Ebar, "-k", linewidth=0.5)
+        ax.grid(visible=True, which="both", linestyle=":", linewidth=0.5)
+        ax.set_ylabel(r"$\overline{E}$ $[-]$", fontsize=10)
+        plt.setp(ax.get_xticklabels(), visible=False)
+
+        ax = fig.add_subplot(4, 1, 4)
+        ax.plot(timebar, Lbar, "-k", linewidth=0.5)
+        ax.grid(visible=True, which="both", linestyle=":", linewidth=0.5)
+        ax.set_ylabel(r"$\overline{L}$ $[-]$", fontsize=10)
+        ax.set_xlabel(r"$\tau$ $[-]$", fontsize=10)
+
+        fig.align_ylabels()
+
+        if save_figures:
+            plt.savefig(
+                str(output_dir / f"energy_{lambdas[kr]:d}.pdf"),
+                bbox_inches="tight",
+            )
+
+        # Plotting only LCO data
+        last_cycles = 5
+        zero_crossings = np.where(np.diff(np.sign(ws)))[0]
+        needed_crossings = 2 * last_cycles
+        n_steps = len(ws)
+
+        if len(zero_crossings) > needed_crossings:
+            t_start = zero_crossings[-(needed_crossings + 1)]
+            t_end = zero_crossings[-1]
+        else:
+            # Fallback to the last 20% of simulation.
+            t_start = int(0.8 * n_steps)
+            t_end = n_steps
+
+        plt.figure(kr * 3 + 4, figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
+        plt.plot(ws, wps, "-k", linewidth=0.5, label="Entire Simulation")
+        plt.plot(ws[t_start:t_end], wps[t_start:t_end], "r", label="LCO cycle")
+        plt.gca().grid(
+            visible=True, which="both", linestyle=":", linewidth=0.5
+        )
+        plt.ylabel(r"$\dot{w}$ $[\tau^{-1}]$", fontsize=10)
+        plt.xlabel(r"$w$ $[-]$", fontsize=10)
+        plt.legend(
+            bbox_to_anchor=(0, 1.02, 1, 0.2),
+            loc="lower left",
+            mode="expand",
+            borderaxespad=0,
+            ncol=2,
+            facecolor="white",
+            framealpha=1,
+            fontsize=10,
+        )
+        plt.title(
+            rf"$@ (\xi,\eta)=(0.5,0)$: $\lambda={lambdas[kr]:.2f}$", y=1.15
+        )
+        if save_figures:
+            plt.savefig(
+                str(output_dir / f"phase_diagram_{lambdas[kr]:d}.pdf"),
+                bbox_inches="tight",
+            )
+
     if not save_figures:
         plt.show()
 
@@ -365,11 +464,14 @@ if __name__ == "__main__":
     # Execute benchmark case
     run_simulations(
         n_func=6,
+        basis_type=BasisFunction.BARDELL,
+        theory=StructuralTheory.REISSNER_MINDLIN,
+        n_gauss=-1,
         lambdas=[
             key for key, value in DIXON_MEI_DATABASE.items() if value > 0.0
         ],
         delta_t=1e-6,
         t_end=0.1,
-        parallel=False,
+        parallel=True,
         save_figures=True,
     )
