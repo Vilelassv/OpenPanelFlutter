@@ -8,8 +8,9 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     install_requires=[
-        "numpy",
-        "matplotlib",
-        "scipy",
+        "numpy>=1.22,<2.0.0",
+        "numba>=0.59.0,<0.61.0",
+        "matplotlib>=3.5",
+        "scipy>=1.8",
     ],
 )
