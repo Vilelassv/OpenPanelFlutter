@@ -8,9 +8,12 @@ https://doi.org/https://doi.org/10.1016/j.tws.2021.107964.
 """
 
 import copy
+import logging
 import multiprocessing as mp
+import sys
 from functools import partial
 from pathlib import Path
+from timeit import default_timer as timer
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -27,6 +30,19 @@ from openpanelflutter.panel import Panel
 
 # Configuring the global Matplotlib style
 apply_plot_style()
+
+logger = logging.getLogger("OpenPanelFlutter")
+logger.setLevel(logging.INFO)
+
+# Prevent duplicate handlers if the script is re-run in the same session
+if not logger.handlers:
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.INFO)
+
+    formatter = logging.Formatter("%(message)s")
+    stream_handler.setFormatter(formatter)
+
+    logger.addHandler(stream_handler)
 
 CM_TO_INCH = 0.393701
 WIDTH = 13.0
@@ -85,28 +101,28 @@ def print_simulation_setup(
     n_proc=None,
 ):
     """Print a summary of the simulation configuration."""
-    print("\n" + "=" * 80)
-    print(" SIMULATION RUNTIME SETUP & CONFIGURATION")
-    print("=" * 80)
-    print(f" {'Structural Theory':<25} : {theory.name}")
-    print(f" {'Boundary Conditions':<25} : {boundary_conditions.name}")
-    print(f" {'Basis Function Type':<25} : {basis_type.name}")
-    print(f" {'Number of Functions':<25} : {n_func}")
-    print(f" {'Gauss Quadrature Points':<25} : {n_gauss}")
-    print("-" * 80)
-    print(f" {'Time Step (dt)':<25} : {delta_t:.1e} s")
-    print(f" {'Final Time (t_end)':<25} : {t_end:<5.2f} s")
-    print(f" {'Total Steps per Case':<25} : {int(t_end / delta_t):,}")
-    print(f" {'Cases (λ)':<25} : {len(lambdas)} cases {list(lambdas)}")
-    print("-" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info(" SIMULATION RUNTIME SETUP & CONFIGURATION")
+    logger.info("=" * 80)
+    logger.info(f" {'Structural Theory':<25} : {theory.name}")
+    logger.info(f" {'Boundary Conditions':<25} : {boundary_conditions.name}")
+    logger.info(f" {'Basis Function Type':<25} : {basis_type.name}")
+    logger.info(f" {'Number of Functions':<25} : {n_func}")
+    logger.info(f" {'Gauss Quadrature Points':<25} : {n_gauss}")
+    logger.info("-" * 80)
+    logger.info(f" {'Time Step (dt)':<25} : {delta_t:.1e} s")
+    logger.info(f" {'Final Time (t_end)':<25} : {t_end:<5.2f} s")
+    logger.info(f" {'Total Steps per Case':<25} : {int(t_end / delta_t):,}")
+    logger.info(f" {'Cases (λ)':<25} : {len(lambdas)} cases {list(lambdas)}")
+    logger.info("-" * 80)
 
     if parallel:
-        print(f" {'Execution Mode':<25} : PARALLEL BATCH")
-        print(f" {'Processors Allocated':<25} : {n_proc}")
+        logger.info(f" {'Execution Mode':<25} : PARALLEL BATCH")
+        logger.info(f" {'Processors Allocated':<25} : {n_proc}")
     else:
-        print(f" {'Execution Mode':<25} : SERIAL BATCH")
+        logger.info(f" {'Execution Mode':<25} : SERIAL BATCH")
 
-    print("=" * 80 + "\n")
+    logger.info("=" * 80 + "\n")
 
 
 def print_terminal_summary_critical(lambda_cr):
@@ -122,48 +138,48 @@ def print_terminal_summary_critical(lambda_cr):
     err_abs_ts = lambda_cr - ref_lambda_ts
     err_rel_ts = (err_abs_ts / ref_lambda_ts) * 100
 
-    print("\n" + "=" * 94)
-    print(" CRITICAL AERODYNAMIC PRESSURE PARAMETER (λ_crit) COMPARISON")
-    print("=" * 94)
-    print(
+    logger.info("\n" + "=" * 94)
+    logger.info(" CRITICAL AERODYNAMIC PRESSURE PARAMETER (λ_crit) COMPARISON")
+    logger.info("=" * 94)
+    logger.info(
         f"{'Source':<25} | {'λ_crit':<10} | {'Abs. Error':<12} |"
         f" {'Rel. Error (%)':<15}"
     )
-    print("-" * 94)
-    print(
+    logger.info("-" * 94)
+    logger.info(
         f"{'Dixon and Mei (1993)':<25} |"
         f" {ref_lambda_dm:<10.2f} | {'-':<12} | {'-':<15}"
     )
-    print(
+    logger.info(
         f"{'Tsunematsu et al. (2021)':<25} |"
         f" {ref_lambda_ts:<10.2f} | {'-':<12} | {'-':<15}"
     )
-    print("-" * 94)
-    print(
+    logger.info("-" * 94)
+    logger.info(
         f"{'Present Work':<25} | {lambda_cr:<10.2f} |"
         f" {err_abs_dm:<+12.2f} | {err_rel_dm:<+15.2f} (vs Dixon and Mei)"
     )
-    print(
+    logger.info(
         f"{'':<25} | {'':<10} | {err_abs_ts:<+12.2f} |"
         f" {err_rel_ts:<+15.2f} (vs Tsunematsu et al.)"
     )
-    print("=" * 94 + "\n")
+    logger.info("=" * 94 + "\n")
 
 
 def print_terminal_summary_amplitude(my_amplitudes):
     """Print a verification matrix block directly to the stdout terminal."""
-    print("")
-    print("=" * 108)
-    print(" NON-DIMENSIONAL LCO AMPLITUDE COMPARISON")
-    print("=" * 108)
+    logger.info("")
+    logger.info("=" * 108)
+    logger.info(" NON-DIMENSIONAL LCO AMPLITUDE COMPARISON")
+    logger.info("=" * 108)
     # Present Work || Dixon & Mei Block || Tsunematsu Block
     header = (
         f"{'λ':<6} | {'Present Work':<13} || "
         f"{'Dixon and Mei':<14} | {'Abs. Err.':<10} | {'% Err.':<8} || "
         f"{'Tsunematsu et al.':<18} | {'Abs. Err.':<10} | {'% Err.':<8}"
     )
-    print(header)
-    print("-" * 108)
+    logger.info(header)
+    logger.info("-" * 108)
 
     # Filter keys where reference values are strictly greater than zero
     active_lambdas = [k for k, v in DIXON_MEI_DATABASE.items() if v > 0.0]
@@ -182,15 +198,15 @@ def print_terminal_summary_amplitude(my_amplitudes):
         amp_rel_err_ts = (amp_abs_err_ts / val_ts) * 100 if val_ts > 0 else 0.0
 
         # Row print aligned dynamically with the specified header boundaries
-        print(
+        logger.info(
             f"{lam:<6} | {val_my:<13.4f} || "
             f"{val_dm:<14.4f} | {amp_abs_err_dm:<+10.4f} |"
             f" {amp_rel_err_dm:<+8.2f} || "
             f"{val_ts:<18.4f} | {amp_abs_err_ts:<+10.4f} |"
             f" {amp_rel_err_ts:<+8.2f}"
         )
-    print("=" * 108)
-    print("")
+    logger.info("=" * 108)
+    logger.info("")
 
 
 def _single_simulation_worker(
@@ -219,6 +235,16 @@ def run_simulations(
     save_figures=False,
 ):
     """Run verification and generate benchmarking data against literature."""
+    subcase = f"theory_{theory.value}_func_{basis_type.value}_nfunc_{n_func}"
+    output_dir = CURRENT_DIR / "figures" / "compare_Dixon_Mei" / subcase
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_filepath = output_dir / "benchmark_run.log"
+    file_handler = logging.FileHandler(
+        log_filepath, mode="w", encoding="utf-8"
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(file_handler)
     # Panel setup: a=0.305, b=0.305
     panel = Panel(0.305, 0.305, LAMINATE)
     panel.setup_kinematics(
@@ -251,12 +277,14 @@ def run_simulations(
     w0 = (D011 / (AS4_PEEK.rho * h * panel.a**4)) ** 0.5
 
     analyses = Analysis(panel)
-    print("Flutter analysis: ", end="")
-    analyses.run_lambda_sweep(lambda_min=160, lambda_max=165, n_points=200)
+    logger.info("Flutter analysis: ")
+    analyses.run_lambda_sweep(lambda_min=100, lambda_max=200, n_points=200)
     analyses.identify_flutter()
     print_terminal_summary_critical(analyses.lamb_cr_interp)
 
     panel_template = copy.deepcopy(panel)
+
+    start = timer()
 
     if parallel:
         worker = partial(
@@ -273,7 +301,7 @@ def run_simulations(
             min(max_proc, requested_proc) if requested_proc > 0 else max_proc
         )
 
-        print(
+        logger.info(
             f"Parallel batch with {len(lambdas)} cases, "
             f"using {n_proc} processors:"
         )
@@ -281,7 +309,7 @@ def run_simulations(
         with mp.Pool(processes=n_proc) as pool:
             results = pool.map(worker, lambdas)
     else:
-        print(f"Serial batch with {len(lambdas)} cases: ")
+        logger.info(f"Serial batch with {len(lambdas)} cases: ")
         results = [
             _single_simulation_worker(
                 lamb,
@@ -291,10 +319,25 @@ def run_simulations(
             )
             for lamb in lambdas
         ]
+    end = timer()
+    timedif = (end - start) / 60  # minutes
+
+    time_h = int(timedif // 60)
+
+    remain = timedif % 60
+
+    time_m = int(remain // 1)
+
+    time_s = int(round((remain % 1) * 60))
+
+    logger.info(
+        f"Finished. Total Elapsed Time: "
+        f"{time_h:d} h {time_m:d} m {time_s:d} s",
+    )
 
     _, local_amp, _, _, _, _ = map(np.array, zip(*results))
 
-    print("\n" + "Post-critical analysis: ", end="")
+    logger.info("\n" + "Post-critical analysis: ")
     print_terminal_summary_amplitude(local_amp)
 
     lambdas_sim = np.insert(lambdas, 0, analyses.lamb_cr_interp)
@@ -332,11 +375,7 @@ def run_simulations(
     plt.gca().grid(visible=True, which="both", linestyle=":", linewidth=0.5)
     plt.ylabel("$w_A$ $[-]$", fontsize=10)
     plt.xlabel(r"$\lambda$ $[-]$", fontsize=10)
-    plt.xlim([160, 290])
     if save_figures:
-        output_dir = CURRENT_DIR / "figures" / "compare_Dixon_Mei"
-        output_dir.mkdir(parents=True, exist_ok=True)
-
         plt.savefig(
             str(output_dir / "limit_cycle_DixonMei.pdf"), bbox_inches="tight"
         )
@@ -463,7 +502,7 @@ if __name__ == "__main__":
     mp.freeze_support()
     # Execute benchmark case
     run_simulations(
-        n_func=6,
+        n_func=5,
         basis_type=BasisFunction.BARDELL,
         theory=StructuralTheory.REISSNER_MINDLIN,
         n_gauss=-1,
