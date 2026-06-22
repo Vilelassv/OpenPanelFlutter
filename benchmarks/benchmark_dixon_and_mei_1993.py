@@ -502,7 +502,7 @@ if __name__ == "__main__":
     mp.freeze_support()
     # Execute benchmark case
     run_simulations(
-        n_func=5,
+        n_func=6,
         basis_type=BasisFunction.BARDELL,
         theory=StructuralTheory.REISSNER_MINDLIN,
         n_gauss=-1,

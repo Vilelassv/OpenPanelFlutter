@@ -6,6 +6,9 @@ reduced-order dynamic simulations using different numerical schemes.
 
 import numpy as np
 import scipy.linalg as la
+from numba import njit
+
+from .panel import _panel_compute_nl
 
 
 class Integrator:
@@ -34,11 +37,36 @@ class Integrator:
                 kind (str): Reduction basis type: 'NM' (Natural Modes) or
                            'AEM' (Aeroelastic Modes). Defaults to 'NM'.
         """
-        self.panel = panel
+        panel.init_nlin()
+        self.h = panel.laminate.total_thickness
+
+        self.len_u = len(panel.base_u)
+        self.len_v = len(panel.base_v)
+        self.len_w = len(panel.base_w)
+        self.len_tot = panel.len_tot
+
         self.dt = dt
         self.tf = tf
         self.max_steps = int(tf / dt)
         self.time_array = np.linspace(0, tf, self.max_steps)
+
+        # Determine the total reinforced panel kernels for nonlinear terms
+        self.nl_nl = panel.nl_nl
+        self.ac_nl = panel.ac_nl
+        self.nl_ac = panel.nl_ac
+
+        # Ensure modal data is present for NM option
+        if not hasattr(panel, "free_omega_hz"):
+            panel.compute_free_modes()
+            self.eigvecs = panel.eigvecs
+
+        # Pre-alocate for initial codition setting
+        self.phi1 = np.real(self.eigvecs[:, [0]])
+        # Find the value of the first mode at point (0.5, 0)
+        # This requires the basis functions (bdof) evaluated at the point
+        point = np.array([[0.5, 0.0]])
+        # w component
+        self.w_at_point = panel.get_displacement_at_points(point, 2, self.phi1)
 
         # Determine if modal reduction is requested
         n_modes = kwargs.get("n_modes", -1)
@@ -46,7 +74,8 @@ class Integrator:
         if n_modes > 0:
             # --- Reduced Order Model (ROM) Path ---
             kind = kwargs.get("kind", "NM")
-            self._reduce_order(kind, n_modes, panel)
+
+            self._reduce_order(kind, n_modes)
 
             # Update panel to compute non-linear forces directly in modal space
             panel.fnl_v(n_modes, self.h_mat, self.hl_mat)
@@ -82,7 +111,7 @@ class Integrator:
         """
         if kind == "NM":
             # Right and Left bases are identical for symmetric Normal Modes
-            self.h_mat = np.real(self.panel.eigvecs[:, :n_modes])
+            self.h_mat = np.real(self.eigvecs[:, :n_modes])
             self.hl_mat = self.h_mat
         elif kind == "AEM":
             # Aeroelastic Modes: using bi-orthogonal basis (Left/Right)
@@ -130,42 +159,43 @@ class Integrator:
             # --- Scaled First Mode Initialization ---
             # Reference point for scaling: (xi, eta) = (0.5, 0)
             # thickness (h) is retrieved from the laminate/panel properties
-            h = self.panel.laminate.total_thickness
+            h = self.h
             target_disp = 0.01 * h
 
-            # Get the first mode shape in physical space
-            if not hasattr(self, "eigvecs"):
-                self.panel.compute_free_modes()
-            phi1 = np.real(self.panel.eigvecs[:, [0]])
-
-            # Find the value of the first mode at point (0.5, 0)
-            # This requires the basis functions (bdof) evaluated at the point
-            point = np.array([[0.5, 0.0]])
-            # w component
-            w_at_point = self.panel.get_displacement_at_points(point, 2, phi1)
-
             # Calculate the scaling factor to meet 0.01 * h requirement
-            scale_factor = target_disp / w_at_point
-            u0_phys = phi1 * scale_factor
+            scale_factor = target_disp / self.w_at_point
+            u0_phys = self.phi1 * scale_factor
             du0_phys = np.zeros_like(u0_phys)
 
             # Project to modal space if ROM is active, otherwise assign to FOM
-            if self.size < self.panel.len_tot:
-                self.displ[:, [0]] = self.hl_mat.T @ (
-                    self.panel.m_mat @ u0_phys
-                )
-                self.veloc[:, [0]] = self.hl_mat.T @ (
-                    self.panel.m_mat @ du0_phys
-                )
+            if self.size < self.len_tot:
+                self.displ[:, [0]] = self.hl_mat.T @ (self.m_mat @ u0_phys)
+                self.veloc[:, [0]] = self.hl_mat.T @ (self.m_mat @ du0_phys)
             else:
                 self.displ[:, [0]] = u0_phys
                 self.veloc[:, [0]] = du0_phys
+
+            len_w = self.len_w
+            mapping_size = int((len_w + 1) * len_w / 2)
+            total_dof = self.len_tot
+            work_nu3_bar = np.zeros((mapping_size, len_w))
+            work_nu3q = np.zeros((mapping_size, total_dof))
 
             # Initial acceleration (a0) for the solver:
             # M*a0 = R_ext - K*u0 - C*v0
             u_init = self.displ[:, [0]]
             v_init = self.veloc[:, [0]]
-            r_init = -self.panel.compute_nl(u_init)
+            r_init = -_panel_compute_nl(
+                u_init,
+                self.nl_nl,
+                self.ac_nl,
+                self.nl_ac,
+                self.len_u,
+                self.len_v,
+                self.len_w,
+                work_nu3_bar,
+                work_nu3q,
+            )
 
             rhs_init = r_init - self.k_mat @ u_init - self.c_mat @ v_init
             a_init = la.solve(self.m_mat, rhs_init)
@@ -186,12 +216,10 @@ class Integrator:
             "u_prev": self.displ[:, [-2]],
         }
 
-    def solve_cdm(self, initial_weight=1.0, print_progress=False):
+    def solve_cdm(self):
         """Perform time integration using the Central Difference Method (CDM).
 
-        Args:
-            initial_weight (float): Scale factor for the first mode as IC.
-            print_progress (bool): If True, prints current step index.
+        This function isolates the method inside a numba precompiled function.
         """
         dt = self.dt
         a0 = 1.0 / (dt**2)
@@ -206,36 +234,102 @@ class Integrator:
         u_prev = self.initial_condition["u_prev"]
         u_curr = self.initial_condition["u0"]
 
-        for n in range(self.max_steps):
-            # Compute non-linear internal forces
-            r_curr = -self.panel.compute_nl(u_curr)
+        len_w = self.len_w
+        mapping_size = int((len_w + 1) * len_w / 2)
+        total_dof = self.len_tot
+        work_nu3_bar = np.zeros((mapping_size, len_w))
+        work_nu3q = np.zeros((mapping_size, total_dof))
 
-            # Equivalent force vector
-            rhs = (
-                r_curr
-                - (self.k_mat - a2 * self.m_mat) @ u_curr
-                - (a0 * self.m_mat - a1 * self.c_mat) @ u_prev
-            )
-
-            # Solve for next displacement
-            u_next = m_eff_inv @ rhs
-
-            # Reconstruct velocity and acceleration at time n
-            self.accel[:, [n]] = a0 * (u_prev - 2.0 * u_curr + u_next)
-            self.veloc[:, [n]] = a1 * (-u_prev + u_next)
-            self.f_ext[:, [n]] = r_curr
-
-            # Step forward
-            u_prev = u_curr
-            u_curr = u_next
-
-            if n + 1 < self.max_steps:
-                self.displ[:, [n + 1]] = u_next
-
-            if print_progress and n % 500 == 0:
-                print(f"Integration Step: {n} / {self.max_steps}")
+        self.disp, self.veloc, self.accel, self.f_ext = _core_cdm_loop(
+            u_curr,
+            u_prev,
+            self.max_steps,
+            self.nl_nl,
+            self.ac_nl,
+            self.nl_ac,
+            self.len_u,
+            self.len_v,
+            self.len_w,
+            work_nu3_bar,
+            work_nu3q,
+            self.k_mat,
+            self.m_mat,
+            self.c_mat,
+            m_eff_inv,
+            a0,
+            a1,
+            a2,
+            self.displ,
+            self.veloc,
+            self.accel,
+            self.f_ext,
+        )
 
     def solve_gen_alpha(self):
         """Generalized-Alpha Method placeholder."""
         print("Generalized-Alpha not yet implemented.")
         pass
+
+
+@njit(cache=True)
+def _core_cdm_loop(
+    u_curr,
+    u_prev,
+    max_steps,
+    nl_nl,
+    ac_nl,
+    nl_ac,
+    len_u,
+    len_v,
+    len_w,
+    Nu3bar,
+    Nu3q,
+    k_mat,
+    m_mat,
+    c_mat,
+    m_eff_inv,
+    a0,
+    a1,
+    a2,
+    displ,
+    veloc,
+    accel,
+    f_ext,
+):
+    for n in range(max_steps):
+        # Compute non-linear internal forces
+        r_curr = -_panel_compute_nl(
+            u_curr,
+            nl_nl,
+            ac_nl,
+            nl_ac,
+            len_u,
+            len_v,
+            len_w,
+            Nu3bar,
+            Nu3q,
+        )
+
+        # Equivalent force vector
+        rhs = (
+            r_curr
+            - (k_mat - a2 * m_mat) @ u_curr
+            - (a0 * m_mat - a1 * c_mat) @ u_prev
+        )
+
+        # Solve for next displacement
+        u_next = m_eff_inv @ rhs
+
+        # Reconstruct velocity and acceleration at time n
+        accel[:, n] = a0 * (u_prev - 2.0 * u_curr + u_next)[:, 0]
+        veloc[:, n] = a1 * (-u_prev + u_next)[:, 0]
+        f_ext[:, n] = r_curr[:, 0]
+
+        # Step forward
+        u_prev = u_curr
+        u_curr = u_next
+
+        if n + 1 < max_steps:
+            displ[:, n + 1] = u_next[:, 0]
+
+    return displ, veloc, accel, f_ext

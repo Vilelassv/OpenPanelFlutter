@@ -19,7 +19,7 @@ from .definitions import (
     apply_plot_style,
 )
 from .material import Laminate
-from .stiffener import Stiffener, _stiffener_compute_nl
+from .stiffener import Stiffener
 
 apply_plot_style()
 
@@ -1529,60 +1529,50 @@ class Panel:
                 np.tensordot(wgs, dNbT @ self.laminate.A @ epsm, [0, 0])
                 * self.jac
             )
+        # Determine the entire nonlinear kernels considering all stiffeners
+        self._nonlinear_kernels()
 
-    def _stiffeners_nonlinear_kernels(self):
-        """Sum pre-integrated nonlinear kernels from all stiffener objects.
+    def _nonlinear_kernels(self):
+        """Sum pre-integrated nonlinear kernels from all structure.
 
         This function iterates through the list of stiffeners and aggregates
         their constant kernels (nlnl, unl, nlu) into a single representation of
-        the reinforcement contribution. This summation is valid because all
+        the structure contribution. This summation is valid because all
         elements are mapped to the same global generalized coordinates (q) via
         the Rayleigh-Ritz formulation.
 
         Returns:
             tuple: A tuple containing (sum_nlnl, sum_unl, sum_nlu) as NumPy
-                arrays representing the total stiffener contribution.
+                arrays representing the total reinforced panel contribution.
         """
-        # Size of the nonlinear mapping matrix
-        len_w = len(self.base_w)
-        len_tot = self.len_tot
-        len_nl = int((len_w + 1) * len_w / 2)
-
-        # Pre-allocate zero matrices for the aggregated kernels
-        sum_nlnl = np.zeros((len_nl, len_nl))
-        sum_unl = np.zeros((len_tot, len_nl))
-        sum_nlu = np.zeros((len_nl, len_tot))
-
-        # If no stiffeners are present, return the zero kernels
-        if not self.stiffeners:
-            return sum_nlnl, sum_unl, sum_nlu
+        # Pre-allocate with panel kernels
+        nl_nl = self.NLNL
+        ac_nl = self.eNL + self.kNL
+        nl_ac = self.NLe + self.NLk
 
         # Iteratively sum kernels from each stiffener object
         for st in self.stiffeners:
             # Accessing the kernels stored in each stiffener object
-            sum_nlnl += st.nlnl
-            sum_unl += st.unl
-            sum_nlu += st.nlu
+            nl_nl += st.nlnl
+            ac_nl += st.unl
+            nl_ac += st.nlu
 
-        return sum_nlnl, sum_unl, sum_nlu
+        self.nl_nl = nl_nl
+        self.ac_nl = ac_nl
+        self.nl_ac = nl_ac
 
 
 @njit(cache=True)
 def _panel_compute_nl(
     ut,
-    nlnl,
-    knl,
-    enl,
-    nlk,
-    nle,
-    nlnl_st,
-    unl_st,
-    nlu_st,
+    nl_nl,
+    ac_nl,
+    nl_ac,
     len_u,
     len_v,
     len_w,
-    len_bx,
-    len_by,
+    Nu3bar,
+    Nu3q,
 ):
     """Compute the non-linear force vector using Numba.
 
@@ -1594,45 +1584,32 @@ def _panel_compute_nl(
     Args:
         ut : ndarray
             Generalized displacement vector at the current time step.
-        nlnl : ndarray
+        nl_nl : ndarray
             Pre-computed purely non-linear stiffness matrix.
-        knl: ndarray
+        ac_nl: ndarray
             Pre-computed coupling matrix.
-        enl: ndarray
+        nl_ac: ndarray
             Pre-computed coupling matrix.
-        nlk: ndarray
-            Pre-computed coupling matrix.
-        nle: ndarray
-            Pre-computed coupling matrix.
-        nlnl_st : ndarray
-            Pre-computed total non-linear stiffener matrix.
-        unl_st: ndarray
-            Pre-computed total coupling stiffener matrix.
-        nlu_st: ndarray
-            Pre-computed total coupling stiffener matrix.
         len_u : int
             Number of degrees of freedom for u-displacement.
         len_v : int
             Number of degrees of freedom for v-displacement.
         len_w : int
             Number of degrees of freedom for w-displacement.
-        len_bx : int
-            Number of degrees of freedom for beta_x-displacement.
-        len_by : int
-            Number of degrees of freedom for beta_y-displacement.
+        Nu3bar: ndarray
+            Pre-allocated matrix.
+        Nu3q: ndarray
+            Pre-allocated matrix.
 
     Returns:
         ndarray
             The compiled baseline non-linear force vector for the panel.
     """
-    len_nl = int((len_w + 1) * len_w / 2)
-    len_tot = len_u + len_v + len_w + len_bx + len_by
-
     # Extract transverse displacement degrees of freedom
     u3 = ut[len_u + len_v : len_u + len_v + len_w]
 
     # Nu3bar maps u3 to the non-linear vector space
-    Nu3bar = np.zeros((len_nl, len_w))
+    Nu3bar.fill(0.0)
 
     # Fill diagonal components (u_i * u_i terms)
     for i in range(len_w):
@@ -1652,22 +1629,14 @@ def _panel_compute_nl(
             idx_count += 1
 
     # Assemble global mapping matrix
-    Nu3q = np.zeros((len_nl, len_tot))
+    Nu3q.fill(0.0)
     Nu3q[:, len_u + len_v : len_u + len_v + len_w] = Nu3bar
 
     # Purely non-linear force
-    fnl = Nu3q.T @ (nlnl @ (Nu3q @ ut))
+    fnl = Nu3q.T @ ((nl_nl) @ (Nu3q @ ut))
 
     # Coupling forces
-    f_acp = (
-        (knl @ (Nu3q @ ut))
-        + (enl @ (Nu3q @ ut))
-        + (Nu3q.T @ (nlk @ ut))
-        + (Nu3q.T @ (nle @ ut))
-    )
+    f_acp = ac_nl @ (Nu3q @ ut)
+    f_acp += Nu3q.T @ (nl_ac @ ut)
 
-    fnl_stiffeners = _stiffener_compute_nl(
-        ut, nlnl_st, unl_st, nlu_st, len_u, len_v, len_w, len_bx, len_by
-    )
-
-    return fnl + f_acp + fnl_stiffeners
+    return fnl + f_acp
