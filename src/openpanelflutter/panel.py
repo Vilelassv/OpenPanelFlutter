@@ -19,7 +19,7 @@ from .definitions import (
     apply_plot_style,
 )
 from .material import Laminate
-from .stiffener import Stiffener
+from .stiffener import Stiffener, _stiffener_compute_nl
 
 apply_plot_style()
 
@@ -1423,7 +1423,7 @@ class Panel:
         self.epsmT = np.transpose(self.epsm, [0, 2, 1])
         self.kappaT = np.transpose(self.kappa, [0, 2, 1])
 
-        len_w = len(self.base_u)
+        len_w = len(self.base_w)
         len_tot = self.len_tot
 
         # Geometric transformation for skewed coordinates
@@ -1530,46 +1530,61 @@ class Panel:
                 * self.jac
             )
 
-    def compute_nl(self, ut):
-        """Compute the non-linear internal force vector.
+    def _stiffeners_nonlinear_kernels(self):
+        """Sum pre-integrated nonlinear kernels from all stiffener objects.
 
-        Calculates the internal forces arising from large deflections
-        (Von Kármán strains), accounting for membrane-bending coupling
-        and stiffness from stiffeners.
-
-        Args:
-            ut (ndarray): Global displacement vector (or modal coordinates).
+        This function iterates through the list of stiffeners and aggregates
+        their constant kernels (nlnl, unl, nlu) into a single representation of
+        the reinforcement contribution. This summation is valid because all
+        elements are mapped to the same global generalized coordinates (q) via
+        the Rayleigh-Ritz formulation.
 
         Returns:
-            ndarray: The non-linear internal force vector.
+            tuple: A tuple containing (sum_nlnl, sum_unl, sum_nlu) as NumPy
+                arrays representing the total stiffener contribution.
         """
-        # Call the high-performance Numba function for the core panel physics
-        f_panel = _panel_core_nl_numba(
-            ut,
-            self.NLNL,
-            self.kNL,
-            self.eNL,
-            self.NLk,
-            self.NLe,
-            len(self.base_u),
-            len(self.base_v),
-            len(self.base_w),
-            self.len_tot,
-        )
+        # Size of the nonlinear mapping matrix
+        len_w = len(self.base_w)
+        len_tot = self.len_tot
+        len_nl = int((len_w + 1) * len_w / 2)
 
-        # Stiffener contributions
-        f_stf = np.zeros_like(f_panel)
-        for stf in self.stiffeners:
-            f_stf += stf.compute_nl(ut)
+        # Pre-allocate zero matrices for the aggregated kernels
+        sum_nlnl = np.zeros((len_nl, len_nl))
+        sum_unl = np.zeros((len_tot, len_nl))
+        sum_nlu = np.zeros((len_nl, len_tot))
 
-        return f_panel + f_stf
+        # If no stiffeners are present, return the zero kernels
+        if not self.stiffeners:
+            return sum_nlnl, sum_unl, sum_nlu
+
+        # Iteratively sum kernels from each stiffener object
+        for st in self.stiffeners:
+            # Accessing the kernels stored in each stiffener object
+            sum_nlnl += st.nlnl
+            sum_unl += st.unl
+            sum_nlu += st.nlu
+
+        return sum_nlnl, sum_unl, sum_nlu
 
 
 @njit(cache=True)
-def _panel_core_nl_numba(
-    ut, nlnl, knl, enl, nlk, nle, len_u, len_v, len_w, len_tot
+def _panel_compute_nl(
+    ut,
+    nlnl,
+    knl,
+    enl,
+    nlk,
+    nle,
+    nlnl_st,
+    unl_st,
+    nlu_st,
+    len_u,
+    len_v,
+    len_w,
+    len_bx,
+    len_by,
 ):
-    """Compute the geometric non-linear and coupling forces using Numba.
+    """Compute the non-linear force vector using Numba.
 
     This function isolates the heavy tensor contractions and triangular
     mappings of the Von Karman strains from the Python class scope. It runs
@@ -1582,27 +1597,36 @@ def _panel_core_nl_numba(
         nlnl : ndarray
             Pre-computed purely non-linear stiffness matrix.
         knl: ndarray
-            Pre-computed coupling matrices.
+            Pre-computed coupling matrix.
         enl: ndarray
-            Pre-computed coupling matrices.
+            Pre-computed coupling matrix.
         nlk: ndarray
-            Pre-computed coupling matrices.
+            Pre-computed coupling matrix.
         nle: ndarray
-            Pre-computed coupling matrices.
+            Pre-computed coupling matrix.
+        nlnl_st : ndarray
+            Pre-computed total non-linear stiffener matrix.
+        unl_st: ndarray
+            Pre-computed total coupling stiffener matrix.
+        nlu_st: ndarray
+            Pre-computed total coupling stiffener matrix.
         len_u : int
             Number of degrees of freedom for u-displacement.
         len_v : int
             Number of degrees of freedom for v-displacement.
         len_w : int
             Number of degrees of freedom for w-displacement.
-        len_tot: int
-            Total number of degrees of freedom
+        len_bx : int
+            Number of degrees of freedom for beta_x-displacement.
+        len_by : int
+            Number of degrees of freedom for beta_y-displacement.
 
     Returns:
         ndarray
             The compiled baseline non-linear force vector for the panel.
     """
     len_nl = int((len_w + 1) * len_w / 2)
+    len_tot = len_u + len_v + len_w + len_bx + len_by
 
     # Extract transverse displacement degrees of freedom
     u3 = ut[len_u + len_v : len_u + len_v + len_w]
@@ -1642,4 +1666,8 @@ def _panel_core_nl_numba(
         + (Nu3q.T @ (nle @ ut))
     )
 
-    return fnl + f_acp
+    fnl_stiffeners = _stiffener_compute_nl(
+        ut, nlnl_st, unl_st, nlu_st, len_u, len_v, len_w, len_bx, len_by
+    )
+
+    return fnl + f_acp + fnl_stiffeners

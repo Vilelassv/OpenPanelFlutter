@@ -5,6 +5,7 @@ stiffeners with laminate properties oriented perpendicular to panels.
 """
 
 import numpy as np
+from numba import njit
 
 from .basis_functions import Function
 from .definitions import StructuralTheory
@@ -571,3 +572,62 @@ class Stiffener:
         f_acp += nu3q.T @ self.nlu @ ut
 
         return fnl + f_acp
+
+
+@njit(cache=True)
+def _stiffener_compute_nl(
+    ut, nlnl, unl, nlu, len_u, len_v, len_w, len_bx, len_by
+):
+    """Compute nonlinear force vector for a given displacement using Numba.
+
+    This function isolates the heavy tensor contractions and triangular
+    mappings of the Von Karman strains from the Python class scope. It runs
+    in native machine speed and utilizes Numba's compiled loops to eliminate
+    the overhead of repetitive matrix allocations.
+
+    Args:
+        ut : ndarray
+            Generalized displacement vector at the current time step.
+        nlnl : ndarray
+            Pre-computed purely non-linear stiffness matrix.
+        unl: ndarray
+            Pre-computed coupling matrices.
+        nlu: ndarray
+            Pre-computed coupling matrices.
+        len_u : int
+            Number of degrees of freedom for u-displacement.
+        len_v : int
+            Number of degrees of freedom for v-displacement.
+        len_w : int
+            Number of degrees of freedom for w-displacement.
+        len_bx : int
+            Number of degrees of freedom for beta_x-displacement.
+        len_by : int
+            Number of degrees of freedom for beta_y-displacement.
+
+    Returns:
+        ndarray
+            The compiled baseline non-linear force vector for the panel.
+    """
+    total_dof = len_u + len_v + len_w + len_bx + len_by
+
+    # Extract transverse displacement DOFs
+    u3 = ut[len_u + len_v : len_u + len_v + len_w]
+    nu3_bar = np.zeros((int((len_w + 1) * len_w / 2), len_w))
+
+    nu3_bar[:len_w, :] = np.diag(u3[:, 0])
+    for kk, uu in enumerate(u3):
+        start = int((1 + kk) * len_w - (1 + kk) * kk / 2)
+        end = int((2 + kk) * len_w - (1 + kk) * (2 + kk) / 2)
+        nu3_bar[start:end, kk] = 0.5 * u3[kk + 1 :, 0]
+        nu3_bar[start:end, kk + 1 :] = 0.5 * uu * np.eye(int(len_w - (1 + kk)))
+
+    nu3q = np.zeros((int((len_w + 1) * len_w / 2), total_dof))
+    nu3q[:, len_u + len_v : len_u + len_v + len_w] = nu3_bar
+
+    # Nonlinear force terms
+    fnl = nu3q.T @ nlnl @ nu3q @ ut
+    f_acp = unl @ nu3q @ ut
+    f_acp += nu3q.T @ nlu @ ut
+
+    return fnl + f_acp
