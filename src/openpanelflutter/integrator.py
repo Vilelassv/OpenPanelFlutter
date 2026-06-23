@@ -242,9 +242,11 @@ class Integrator:
         a1 = 1.0 / (2.0 * dt)
         a2 = 2.0 * a0
 
-        # Effective mass matrix for CDM and LU decomposition for efficiency
+        # Effective mass matrix for CDM
         m_eff = a0 * self.m_mat + a1 * self.c_mat
-        lu_m_eff, piv_m_eff = la.lu_factor(m_eff)
+        lu, piv = la.lu_factor(m_eff)
+        lu_meff = np.ascontiguousarray(lu, dtype=np.float64)
+        piv_meff = np.ascontiguousarray(piv, dtype=np.int32)
 
         # Displacement at t = -dt to kickstart CDM
         u_prev = self.initial_condition["u_prev"]
@@ -271,8 +273,8 @@ class Integrator:
             self.k_mat,
             self.m_mat,
             self.c_mat,
-            lu_m_eff,
-            piv_m_eff,
+            lu_meff,
+            piv_meff,
             a0,
             a1,
             a2,
@@ -287,6 +289,46 @@ class Integrator:
         """Generalized-Alpha Method placeholder."""
         print("Generalized-Alpha not yet implemented.")
         pass
+
+
+@njit(cache=True)
+def _lu_solve(lu, piv, b):
+    """Equivalent to scipy.linalg.lu_solve((lu, piv), b) for Numba."""
+    B = b.astype(np.float64).copy()
+
+    n = lu.shape[0]
+    n_rhs = B.shape[1]
+
+    # 1. Apply the pivot vector to the right-hand side
+    # SciPy/LAPACK pivots are 0-indexed sequential row swaps
+    for i in range(n):
+        p = piv[i]
+        if p != i:
+            for col in range(n_rhs):
+                temp = B[i, col]
+                B[i, col] = B[p, col]
+                B[p, col] = temp
+
+    # 2. Forward Substitution: Solve L @ Y = P @ B
+    # L has implicit 1s on the diagonal
+    for i in range(n):
+        for j in range(i):
+            factor = lu[i, j]
+            for col in range(n_rhs):
+                B[i, col] -= factor * B[j, col]
+
+    # 3. Backward Substitution: Solve U @ X = Y
+    for i in range(n - 1, -1, -1):
+        for j in range(i + 1, n):
+            factor = lu[i, j]
+            for col in range(n_rhs):
+                B[i, col] -= factor * B[j, col]
+
+        diag = lu[i, i]
+        for col in range(n_rhs):
+            B[i, col] /= diag
+
+    return B
 
 
 @njit(cache=True)
@@ -305,8 +347,8 @@ def _core_cdm_loop(
     k_mat,
     m_mat,
     c_mat,
-    lu_m_eff,
-    piv_m_eff,
+    lu,
+    piv,
     a0,
     a1,
     a2,
@@ -337,8 +379,8 @@ def _core_cdm_loop(
             - (a0 * m_mat - a1 * c_mat) @ u_prev
         )
 
-        # Solve for next displacement with LU decomposition for efficiency
-        u_next = la.lu_solve((lu_m_eff, piv_m_eff), rhs)
+        # Solve for next displacement
+        u_next = _lu_solve(lu, piv, rhs)
 
         # Reconstruct velocity and acceleration at time n
         if n % sampling_freq == 0:
