@@ -278,7 +278,23 @@ def run_simulations(
 
     analyses = Analysis(panel)
     logger.info("Flutter analysis: ")
+    start = timer()
     analyses.run_lambda_sweep(lambda_min=100, lambda_max=200, n_points=200)
+    end = timer()
+    timedif = (end - start) / 60  # minutes
+
+    time_h = int(timedif // 60)
+
+    remain = timedif % 60
+
+    time_m = int(remain // 1)
+
+    time_s = int(round((remain % 1) * 60))
+
+    logger.info(
+        f"Finished. Total Elapsed Time: "
+        f"{time_h:d} h {time_m:d} m {time_s:d} s",
+    )
     analyses.identify_flutter()
     print_terminal_summary_critical(analyses.lamb_cr_interp)
 
@@ -511,6 +527,6 @@ if __name__ == "__main__":
         ],
         delta_t=1e-6,
         t_end=0.1,
-        parallel=True,
+        parallel=False,
         save_figures=True,
     )
