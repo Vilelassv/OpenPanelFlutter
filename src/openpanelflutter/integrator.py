@@ -19,7 +19,9 @@ class Integrator:
     Reduced Order (ROM) spaces.
     """
 
-    def __init__(self, panel, tf, dt, m_mat, k_mat, c_mat, **kwargs):
+    def __init__(
+        self, panel, tf, dt, m_mat, k_mat, c_mat, sampling_freq=1, **kwargs
+    ):
         """Initialize simulation parameters and handle model reduction.
 
         By default, no modal reduction is performed (Full Order Model).
@@ -31,6 +33,10 @@ class Integrator:
             m_mat (ndarray): Mass matrix.
             k_mat (ndarray): Stiffness matrix.
             c_mat (ndarray): Damping matrix.
+            sampling_freq (int, optional): Frequency of data sampling for
+                storage. A value of N means data is saved every N steps.
+                Set sampling_freq=1 to disable downsampling and retain
+                the complete dataset. Defaults to 1.
             **kwargs:
                 n_modes (int): Number of modes for ROM. If not provided or -1,
                                the Full Order Model (FOM) is used.
@@ -48,7 +54,15 @@ class Integrator:
         self.dt = dt
         self.tf = tf
         self.max_steps = int(tf / dt)
-        self.time_array = np.linspace(0, tf, self.max_steps)
+
+        # Ensure sampling frequency is at least 1
+        self.sampling_freq = max(1, int(sampling_freq))
+        # Calculate the reduced size for result arrays
+        # Adding 1 ensures the final step is included
+        # Used to reduced arrays to save memory for long simulations
+        self.save_steps = (self.max_steps // self.sampling_freq) + 1
+
+        self.time_array = np.linspace(0, tf, self.save_steps)
 
         # Determine the total reinforced panel kernels for nonlinear terms
         self.nl_nl = panel.nl_nl
@@ -95,10 +109,10 @@ class Integrator:
             self.size = panel.len_tot
 
         # Memory allocation for state vectors
-        self.displ = np.zeros((self.size, self.max_steps))
-        self.veloc = np.zeros((self.size, self.max_steps))
-        self.accel = np.zeros((self.size, self.max_steps))
-        self.f_ext = np.zeros((self.size, self.max_steps))
+        self.displ = np.zeros((self.size, self.save_steps))
+        self.veloc = np.zeros((self.size, self.save_steps))
+        self.accel = np.zeros((self.size, self.save_steps))
+        self.f_ext = np.zeros((self.size, self.save_steps))
 
         self._set_initial_conditions()
 
@@ -219,16 +233,18 @@ class Integrator:
     def solve_cdm(self):
         """Perform time integration using the Central Difference Method (CDM).
 
-        This function isolates the method inside a numba precompiled function.
+        This method coordinates the temporal marching process. It utilizes
+        spatial-temporal decoupling by passing pre-integrated kernels to
+        a Numba-optimized core engine.
         """
         dt = self.dt
         a0 = 1.0 / (dt**2)
         a1 = 1.0 / (2.0 * dt)
         a2 = 2.0 * a0
 
-        # Effective mass matrix for CDM
+        # Effective mass matrix for CDM and LU decomposition for efficiency
         m_eff = a0 * self.m_mat + a1 * self.c_mat
-        m_eff_inv = la.inv(m_eff)
+        lu_m_eff, piv_m_eff = la.lu_factor(m_eff)
 
         # Displacement at t = -dt to kickstart CDM
         u_prev = self.initial_condition["u_prev"]
@@ -255,7 +271,8 @@ class Integrator:
             self.k_mat,
             self.m_mat,
             self.c_mat,
-            m_eff_inv,
+            lu_m_eff,
+            piv_m_eff,
             a0,
             a1,
             a2,
@@ -263,6 +280,7 @@ class Integrator:
             self.veloc,
             self.accel,
             self.f_ext,
+            self.sampling_freq,
         )
 
     def solve_gen_alpha(self):
@@ -287,7 +305,8 @@ def _core_cdm_loop(
     k_mat,
     m_mat,
     c_mat,
-    m_eff_inv,
+    lu_m_eff,
+    piv_m_eff,
     a0,
     a1,
     a2,
@@ -295,6 +314,7 @@ def _core_cdm_loop(
     veloc,
     accel,
     f_ext,
+    sampling_freq,
 ):
     for n in range(max_steps):
         # Compute non-linear internal forces
@@ -317,19 +337,33 @@ def _core_cdm_loop(
             - (a0 * m_mat - a1 * c_mat) @ u_prev
         )
 
-        # Solve for next displacement
-        u_next = m_eff_inv @ rhs
+        # Solve for next displacement with LU decomposition for efficiency
+        u_next = la.lu_solve((lu_m_eff, piv_m_eff), rhs)
 
         # Reconstruct velocity and acceleration at time n
-        accel[:, n] = a0 * (u_prev - 2.0 * u_curr + u_next)[:, 0]
-        veloc[:, n] = a1 * (-u_prev + u_next)[:, 0]
-        f_ext[:, n] = r_curr[:, 0]
+        if n % sampling_freq == 0:
+            save_idx = n // sampling_freq
+
+            accel[:, save_idx] = a0 * (u_prev - 2.0 * u_curr + u_next)[:, 0]
+            veloc[:, save_idx] = a1 * (-u_prev + u_next)[:, 0]
+            f_ext[:, save_idx] = r_curr[:, 0]
+
+            displ[:, save_idx] = u_curr[:, 0]
 
         # Step forward
         u_prev = u_curr
         u_curr = u_next
 
-        if n + 1 < max_steps:
-            displ[:, n + 1] = u_next[:, 0]
+    # --- FINAL STEP SYNCHRONIZATION ---
+    last_idx = displ.shape[1] - 1
+    # 1. Save final generalized coordinates (q)
+    displ[:, last_idx] = u_curr[:, 0]
+    # 2. Compute and save final non-linear internal forces for the last state
+    f_ext[:, last_idx] = -_panel_compute_nl(
+        u_curr, nl_nl, ac_nl, nl_ac, len_u, len_v, len_w, Nu3bar, Nu3q
+    )[:, 0]
+    # 3. Handle final velocity and acceleration
+    accel[:, last_idx] = accel[:, save_idx]
+    veloc[:, last_idx] = veloc[:, save_idx]
 
     return displ, veloc, accel, f_ext
