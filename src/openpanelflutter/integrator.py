@@ -72,7 +72,7 @@ class Integrator:
         # Ensure modal data is present for NM option
         if not hasattr(panel, "free_omega_hz"):
             panel.compute_free_modes()
-            self.eigvecs = panel.eigvecs
+        self.eigvecs = panel.eigvecs
 
         # Pre-alocate for initial codition setting
         self.phi1 = np.real(self.eigvecs[:, [0]])
