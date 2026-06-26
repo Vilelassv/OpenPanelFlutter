@@ -1212,7 +1212,9 @@ class Panel:
         )
 
         # Sort eigenvalues to find the first positive critical Delta T
-        idx = np.real(eigvals).argsort()
+        idx = [
+            i for i in np.real(eigvals).argsort() if np.real(eigvals[i]) > 0
+        ]
         dt_cr = float(np.real(eigvals[idx[0]])) * delta_t0
         first_mode_vector = eigvecs[:, idx[0]]
 
