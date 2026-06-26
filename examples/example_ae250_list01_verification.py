@@ -51,7 +51,7 @@ def question_01(nfunc: int):
         nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
-        n_gauss=30,
+        n_gauss=10,
     )
 
     # Adding torsional edges
@@ -86,7 +86,8 @@ def question_01(nfunc: int):
 
         print(
             f"theta = {np.round(theta, 2)}, Flutter:"
-            + f" \t{np.round(analyses.v_inf_cr_interp, 2)} m/s"
+            + f" \tVelocity={np.round(analyses.v_inf_cr_interp, 2)} m/s,\t"
+            + f"Mach={np.round(analyses.mach_cr_interp, 3)}"
         )
         print("")
 
@@ -153,6 +154,7 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
     flange.add_stack(AL, 1e-3)
 
     vfluter = np.zeros(shape=(len(Hs), len(thetas)))
+    mfluter = np.zeros(shape=(len(Hs), len(thetas)))
 
     for kh, h in enumerate(Hs):
         h = h * panel.laminate.total_thickness
@@ -214,13 +216,41 @@ def question_02a(nfunc: int, Hs: list, thetas: list):
             analyses.identify_flutter()
 
             vfluter[kh, kt] = analyses.v_inf_cr_interp
+            mfluter[kh, kt] = analyses.mach_cr_interp
 
             print(
-                f"H = {h * 1e3:.2f} mm, theta = {theta:.1f} o, flutter = "
-                + f"{vfluter[kh, kt]:.2f} m/s"
+                f"H = {h * 1e3:.2f} mm, theta = {theta:.1f} o, flutter: "
+                + f"Velocity = {vfluter[kh, kt]:.2f} m/s, "
+                + f"Mach = {mfluter[kh, kt]:.2f}"
             )
 
     colors = ["--ob", "--pr", "--sk", "--dm", "--Py", "--^g"]
+
+    plt.figure(figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
+    for kh, theta in enumerate(thetas):
+        plt.plot(
+            np.array(Hs) * panel.laminate.total_thickness,
+            mfluter[kh, :],
+            colors[kh],
+            markersize=3.5,
+            label=r"$\theta = %d~^{\circ}$" % theta,
+        )
+    plt.gca().grid(visible=True, which="both", linestyle=":", linewidth=0.5)
+    plt.xticks(thetas)
+    plt.legend(
+        bbox_to_anchor=(0, 1.02, 1, 0.2),
+        loc="lower left",
+        mode="expand",
+        borderaxespad=0,
+        ncol=3,
+        facecolor="white",
+        framealpha=1,
+        handlelength=1.7,
+        markerscale=1,
+    )
+    plt.ylabel("Flutter Mach $[-]$", fontsize=10)
+    plt.xlabel(r"$H$ $[mm]$", fontsize=10)
+    plt.show(block=False)
 
     plt.figure(figsize=(FIGWIDTH, FIGHEIGHT), dpi=300)
     for kh, h in enumerate(Hs):
@@ -341,11 +371,11 @@ if __name__ == "__main__":
 
     # Question 02 (a, b)
     # Hs is the pad height in terms of fraction of panel total thickness
-    # Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
-    # thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
-    # question_02a(nfunc=2, Hs=Hs, thetas=thetas)
+    Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
+    thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
+    # question_02a(nfunc=10, Hs=Hs, thetas=thetas)
 
-    question_02b(nfunc=10)
+    question_02b(nfunc=8)
 
     input("Press Enter to finish...")
 
