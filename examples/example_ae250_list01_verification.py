@@ -51,7 +51,7 @@ def question_01(nfunc: int):
         nfunc,
         theory=StructuralTheory.KIRCHHOFF,
         basis_type=BasisFunction.SINES,
-        n_gauss=10,
+        n_gauss=30,
     )
 
     # Adding torsional edges
@@ -367,13 +367,13 @@ def question_02b(nfunc: int):
 
 if __name__ == "__main__":
     # Question 01 (a, b, c, d)
-    # question_01(nfunc=4)
+    question_01(nfunc=4)
 
     # Question 02 (a, b)
     # Hs is the pad height in terms of fraction of panel total thickness
     Hs = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5])
     thetas = np.array([15.0, 30.0, 45.0, 60.0, 75.0, 90.0])
-    # question_02a(nfunc=10, Hs=Hs, thetas=thetas)
+    question_02a(nfunc=10, Hs=Hs, thetas=thetas)
 
     question_02b(nfunc=8)
 
