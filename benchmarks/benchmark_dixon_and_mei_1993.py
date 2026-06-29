@@ -424,11 +424,11 @@ def run_simulations(
                 bbox_inches="tight",
             )
 
-        U = 0.5 * np.einsum("ij,ji->i", qt.T, panel.K_structural @ qt - fnl)
+        U = panel.evaluate_strain_energy(qt, fnl=-fnl)
         Ubar = U / D011 / ((h / panel.a) ** 2)
         timebar = time * w0
 
-        T = 0.5 * np.einsum("ij,ji->i", dqt_dt.T, panel.M_global @ dqt_dt)
+        T = panel.evaluate_kinetic_energy(dqt_dt)
         Tbar = T / D011 / ((h / panel.a) ** 2)
 
         Lbar = Tbar - Ubar

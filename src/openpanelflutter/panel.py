@@ -1563,6 +1563,102 @@ class Panel:
         self.ac_nl = ac_nl
         self.nl_ac = nl_ac
 
+    def evaluate_strain_energy(self, qt: np.ndarray, fnl: np.ndarray = None):
+        """Evaluate the total strain energy of the panel.
+
+        Computes the internal strain energy considering both linear elastic
+        stiffness and non-linear structural terms if applicable. Supports
+        input for either a single time step or multiple time steps.
+
+        Args:
+            qt : np.ndarray
+                Generalized coordinates vector or matrix. Shape can be (n_dof,)
+                for a single snapshot or (n_dof, n_steps) for multiple steps.
+            fnl : np.ndarray, optional
+                Pre-computed non-linear internal generalized forces. Must match
+                the shape of `qt`. If None, it will be evaluated internally.
+
+        Returns:
+            np.ndarray
+                Strain energy evaluated at each given time step. Shape is
+                (n_steps,) or (1,) for a single step.
+        """
+        # Ensure inputs are treated as 2D arrays to support time-series
+        if qt.ndim == 1:
+            qt_mat = qt.reshape(-1, 1)
+            fnl_mat = fnl.reshape(-1, 1) if fnl is not None else None
+        else:
+            qt_mat = qt
+            fnl_mat = fnl
+
+        n_steps = qt_mat.shape[1]
+
+        # If non-linear forces are not provided, evaluate them step-by-step
+        if fnl_mat is None:
+            if hasattr(self, "NLNL"):
+                self._nonlinear_kernels()
+                mapping_size = int(
+                    (len(self.base_w) + 1) * len(self.base_w) / 2
+                )
+                total_dof = self.len_tot
+                work_nu3_bar = np.zeros((mapping_size, len(self.base_w)))
+                work_nu3q = np.zeros((mapping_size, total_dof))
+
+                # Initialize the non-linear force matrix
+                fnl_mat = np.zeros_like(qt_mat)
+
+                # Compute non-linear forces sequentially for each time step
+                for i in range(n_steps):
+                    fnl_mat[:, i] = _panel_compute_nl(
+                        qt_mat[:, i],
+                        self.nl_nl,
+                        self.ac_nl,
+                        self.nl_ac,
+                        len(self.base_u),
+                        len(self.base_v),
+                        len(self.base_w),
+                        work_nu3_bar,
+                        work_nu3q,
+                    )
+            else:
+                # Fallback for purely linear structures
+                fnl = np.zeros_like(self.K_structural @ qt)
+
+        strain_energy = 0.5 * np.einsum(
+            "ij,ji->i", qt.T, self.K_structural @ qt + fnl
+        )
+
+        return strain_energy
+
+    def evaluate_kinetic_energy(self, dqt_dt):
+        """Evaluate the total kinetic energy of the panel.
+
+        Calculates the system's kinetic energy using the global generalized
+        mass matrix and the generalized velocity coordinates.
+
+        Args:
+            dqt_dt : np.ndarray
+                First time derivative of generalized coordinates (velocities).
+                Shape can be (n_dof,) for a single snapshot or (n_dof, n_steps)
+                for multiple time steps.
+
+        Returns:
+            np.ndarray
+                Kinetic energy evaluated at each given time step. Shape is
+                (n_steps,) or (1,) for a single step.
+        """
+        # Ensure inputs are treated as 2D arrays to support time-series
+        if dqt_dt.ndim == 1:
+            dqt_dt_mat = dqt_dt.reshape(-1, 1)
+        else:
+            dqt_dt_mat = dqt_dt
+
+        kinetic_energy = 0.5 * np.einsum(
+            "ij,ji->i", dqt_dt_mat.T, self.M_global @ dqt_dt_mat
+        )
+
+        return kinetic_energy
+
 
 @njit(cache=True)
 def _panel_compute_nl(
