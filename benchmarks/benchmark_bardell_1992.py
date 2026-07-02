@@ -5,6 +5,8 @@ skew plates against literature results of Bardell (1992) available at
 https://doi.org/10.1016/0045-7949(92)90044-Z.
 """
 
+import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +18,19 @@ from openpanelflutter.definitions import (
 )
 from openpanelflutter.material import Isotropic, Laminate
 from openpanelflutter.panel import Panel
+
+logger = logging.getLogger("OpenPanelFlutter")
+logger.setLevel(logging.INFO)
+
+# Prevent duplicate handlers if the script is re-run in the same session
+if not logger.handlers:
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.INFO)
+
+    formatter = logging.Formatter("%(message)s")
+    stream_handler.setFormatter(formatter)
+
+    logger.addHandler(stream_handler)
 
 CURRENT_DIR = Path(__file__).resolve().parent
 
@@ -132,20 +147,39 @@ def _format_value(val):
 
 
 def print_terminal_summary(
-    boundary, data, ref, angles, aspects, is_cantilever=False
+    boundary,
+    basis_type,
+    theory,
+    n_func,
+    n_gauss,
+    data,
+    ref,
+    angles,
+    aspects,
+    is_cantilever=False,
 ):
+    """Print a summary of the simulation configuration."""
+    logger.info("\n" + "=" * 80)
+    logger.info(" SIMULATION RUNTIME SETUP & CONFIGURATION")
+    logger.info("=" * 80)
+    logger.info(f" {'Structural Theory':<25} : {theory.name}")
+    logger.info(f" {'Boundary Conditions':<25} : {boundary}")
+    logger.info(f" {'Basis Function Type':<25} : {basis_type.name}")
+    logger.info(f" {'Number of Functions':<25} : {n_func}")
+    logger.info(f" {'Gauss Quadrature Points':<25} : {n_gauss}\n")
+
     """Print an verification matrix block directly to the stdout terminal."""
     separator_line = "=" * 76
     sub_separator = "-" * 76
 
-    print("\n" + separator_line)
-    print(f" BENCHMARK SUMMARY: BOUNDARY CONDITION [{boundary}]")
-    print(separator_line)
-    print(
+    logger.info("\n" + separator_line)
+    logger.info(f" BENCHMARK SUMMARY: BOUNDARY CONDITION [{boundary}]")
+    logger.info(separator_line)
+    logger.info(
         f"{'Skew (deg)':<10} | {'Aspect (a/b)':<12} | {'Mode':<5} |"
         f" {'Calculated':<12} | {'Reference':<12} | {'Error':<9}"
     )
-    print(sub_separator)
+    logger.info(sub_separator)
 
     for ii in range(ref.shape[0]):
         # Dynamically evaluate geometric parameters mapping the database row
@@ -168,14 +202,14 @@ def print_terminal_summary(
             skew_str = f"{skew_val:.1f}°" if jj == 0 else ""
             aspect_str = f"{aspect_val:.1f}" if jj == 0 else ""
 
-            print(
+            logger.info(
                 f"{skew_str:<10} | {aspect_str:<12} | M{jj + 1:<4} |"
                 f" {_format_value(dd):>12} | {_format_value(rr):>12} |"
                 f" {diff_perc:>7.2f}%"
             )
         if ii < ref.shape[0] - 1:
-            print(sub_separator)
-    print(separator_line + "\n")
+            logger.info(sub_separator)
+    logger.info(separator_line + "\n")
 
 
 def write_comp_table(
@@ -413,7 +447,16 @@ def run_case(boundary, n_func, save_tables=False, percent_table=False):
 
     # Print detailed matrix summary directly to terminal screen
     print_terminal_summary(
-        bound_str, ans_rm, reference, angles, aspects, is_4modes
+        bound_str,
+        panel.basis_type,
+        panel.theory,
+        n_func,
+        panel.n_gauss,
+        ans_rm,
+        reference,
+        angles,
+        aspects,
+        is_4modes,
     )
 
     if save_tables:
@@ -441,6 +484,17 @@ def run_case(boundary, n_func, save_tables=False, percent_table=False):
 
 
 if __name__ == "__main__":
+    # logger setup for file output
+    output_dir = CURRENT_DIR / "tables" / "compare_Bardell"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_filepath = output_dir / "benchmark_run.log"
+    file_handler = logging.FileHandler(
+        log_filepath, mode="w", encoding="utf-8"
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(file_handler)
+
     # Execute all benchmark cases and generate comparative tables for LaTeX
     # n_func are selected according to Bardell for each boundary condition.
     run_case(BoundaryCondition.SSSS, n_func=18, save_tables=True)
