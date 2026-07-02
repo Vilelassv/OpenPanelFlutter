@@ -7,9 +7,12 @@ aerospace structures.
 
 from timeit import default_timer as timer
 
+import matplotlib.animation as animation
 import matplotlib.pyplot as plt
+import matplotlib.ticker as tkr
 import numpy as np
 import scipy.linalg as la
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .definitions import apply_plot_style
 from .integrator import Integrator
@@ -797,3 +800,193 @@ class Analysis:
         amplitude = (np.max(w_window) - np.min(w_window)) / 2.0
 
         return amplitude
+
+    def create_3D_animation(
+        self,
+        disp_history,
+        wamp,
+        pth2save,
+        file_name,
+        str_title=None,
+        last_cycles=5,
+        show_arrow=False,
+    ):
+        """Create a 3D animation of the panel's response over time."""
+        xbar = (self.panel.mesh[:, 0] + 1) * self.panel.a / 2
+        ybar = (self.panel.mesh[:, 1] + 1) * self.panel.b / 2
+        X = xbar + ybar * np.sin(self.panel.beta)
+        Y = ybar * np.cos(self.panel.beta)
+        XP = X.reshape(len(self.panel.xi), len(self.panel.xi))
+        YP = Y.reshape(len(self.panel.xi), len(self.panel.xi))
+
+        plot_args = {
+            "rstride": 1,
+            "cstride": 1,
+            "linewidth": 0.01,
+            "antialiased": True,
+            "color": "w",
+            "shade": True,
+        }
+
+        # 1. Determine time window using a reference point (center of the mesh)
+        ref_pt_idx = len(self.panel.mesh) // 2
+        bdof_ref_w = self.panel.bdof[ref_pt_idx, 2, :]
+
+        # Reconstruct history only for the reference point to detect cycles
+        w_ref = (
+            bdof_ref_w @ disp_history
+        ) / self.panel.laminate.total_thickness
+
+        zero_crossings = np.where(np.diff(np.sign(w_ref)))[0]
+        needed_crossings = 2 * last_cycles
+        n_steps = disp_history.shape[1]
+
+        if len(zero_crossings) > needed_crossings:
+            t_start = zero_crossings[-(needed_crossings + 1)]
+            t_end = zero_crossings[-1]
+        else:
+            # Fallback to the last 20% of simulation.
+            t_start = int(0.8 * n_steps)
+            t_end = n_steps
+
+        was = np.zeros(
+            (
+                len(self.panel.xi),
+                len(self.panel.xi),
+                len(np.linspace(t_start, t_end, num=5 * 100)),
+            )
+        )
+
+        for kw, kk in enumerate(np.linspace(t_start, t_end, num=5 * 100)):
+            shape1 = self.panel.bdof @ disp_history[:, int(kk)]
+            shapeW1 = shape1[:, [2]]
+            shapeW1 = shapeW1 / self.panel.laminate.total_thickness
+
+            was[:, :, kw] = shapeW1.reshape(
+                len(self.panel.xi), len(self.panel.xi)
+            )
+
+        cm_to_inch = 0.393701
+        width = 8.8
+        figWidth = width * cm_to_inch
+        fig_ratio = 7.0 / 10.0
+        figHeight = figWidth * fig_ratio
+
+        vmin = -wamp
+        vmax = wamp
+        lvs = np.linspace(vmin, vmax, num=80)
+        mappable = plt.cm.ScalarMappable(cmap=plt.cm.jet)
+        mappable.set_array(was[:, :, 0])
+        mappable.set_clim(vmin, vmax)
+
+        fig = plt.figure(figsize=(figWidth, figHeight), dpi=300)
+
+        ax = fig.add_subplot(1, 2, 1, projection="3d")
+        ax2 = fig.add_subplot(1, 2, 2)
+
+        def draw_flow_arrow(axis2d):
+            """Helper function to plot the flow arrow."""
+            axis2d.annotate(
+                "",
+                xy=(-0.17, 0.5),
+                xytext=(-0.32, 0.5),
+                xycoords="axes fraction",
+                arrowprops=dict(
+                    arrowstyle="->", color="black", lw=1.2, mutation_scale=12
+                ),
+            )
+            # Label V_infty
+            axis2d.text(
+                -0.245,
+                0.53,
+                r"$V_\infty$",
+                transform=axis2d.transAxes,
+                color="black",
+                fontsize=8,
+                ha="center",
+                va="bottom",
+            )
+
+        ax2.contourf(
+            XP,
+            YP,
+            was[:, :, 0],
+            levels=lvs,
+            cmap=mappable.cmap,
+            norm=mappable.norm,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        ax2.set_xticks(ticks=[], labels=None)
+        ax2.set_yticks(ticks=[], labels=None)
+        divider = make_axes_locatable(ax2)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        ax2.set_aspect("equal", adjustable="box")
+        ax2.set_ylabel("$y$", fontsize=10)
+        ax2.set_xlabel("$x$", fontsize=10)
+
+        if show_arrow:
+            draw_flow_arrow(ax2)
+
+        ax.plot_surface(
+            XP,
+            YP,
+            was[:, :, 0],
+            cmap=mappable.cmap,
+            norm=mappable.norm,
+            **plot_args,
+        )
+        ax.set_zlim([vmin, vmax])
+        ax.set_xlim([-1, 1])
+        ax.set_ylim([-1, 1])
+
+        cntr = fig.colorbar(
+            mappable, cax=cax, format=tkr.FormatStrFormatter("%.1f")
+        )
+        cntr.ax.set_ylabel(r"$w/h$ [$-$]")
+        cntr.set_ticks([vmin, 0, vmax])
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_axis_off()
+
+        if str_title is not None:
+            fig.suptitle(str_title, fontsize=10)
+        plt.tight_layout(pad=0)
+
+        def animate(i):
+            ax.clear()
+            ax.plot_surface(
+                XP,
+                YP,
+                was[:, :, i],
+                cmap=mappable.cmap,
+                norm=mappable.norm,
+                **plot_args,
+            )
+            ax.set_zlim([vmin, vmax])
+            ax.set_axis_off()
+
+            for collection in list(ax2.collections):
+                collection.remove()
+
+            ax2.contourf(
+                XP,
+                YP,
+                was[:, :, i],
+                levels=lvs,
+                cmap=mappable.cmap,
+                norm=mappable.norm,
+            )
+            # ax2.set_xticks(ticks=[], labels=None)
+            # ax2.set_yticks(ticks=[], labels=None)
+            # ax2.set_aspect("equal", adjustable="box")
+            # ax2.set_ylabel("$y$", fontsize=10)
+            # ax2.set_xlabel("$x$", fontsize=10)
+
+            # if show_arrow:
+            #    draw_flow_arrow(ax2)
+
+        nmax = len(np.linspace(t_start, t_end, num=5 * 100))
+        ani = animation.FuncAnimation(fig, animate, nmax, blit=False)
+        ani.save(str(pth2save / f"{file_name}.gif"), writer="pillow", fps=1e3)
+
+        plt.close(fig)

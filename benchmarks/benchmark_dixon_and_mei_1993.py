@@ -233,6 +233,8 @@ def run_simulations(
     parallel=True,
     num_proc=4,
     save_figures=False,
+    save_animation=False,
+    show_arrow=False,
 ):
     """Run verification and generate benchmarking data against literature."""
     subcase = f"theory_{theory.value}_func_{basis_type.value}_nfunc_{n_func}"
@@ -504,10 +506,21 @@ def run_simulations(
         plt.title(
             rf"$@ (\xi,\eta)=(0.5,0)$: $\lambda={lambdas[kr]:.2f}$", y=1.15
         )
+
         if save_figures:
             plt.savefig(
                 str(output_dir / f"phase_diagram_{lambdas[kr]:d}.pdf"),
                 bbox_inches="tight",
+            )
+
+        if save_animation:
+            analyses.create_3D_animation(
+                qt,
+                np.max(ws) * 1.1,
+                pth2save=output_dir,
+                file_name=f"animation_{lambdas[kr]:d}",
+                str_title=rf"$\lambda={lambdas[kr]:.2f}$",
+                show_arrow=show_arrow,
             )
 
     if not save_figures:
@@ -529,4 +542,6 @@ if __name__ == "__main__":
         t_end=0.1,
         parallel=False,
         save_figures=True,
+        save_animation=True,
+        show_arrow=True,
     )

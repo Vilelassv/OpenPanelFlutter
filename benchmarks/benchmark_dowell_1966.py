@@ -235,6 +235,8 @@ def run_simulations(
     parallel=True,
     num_proc=4,
     save_figures=False,
+    save_animation=False,
+    show_arrow=False,
 ):
     """Run verification and generate benchmarking data against literature."""
     subcase = f"theory_{theory.value}_func_{basis_type.value}_nfunc_{n_func}"
@@ -512,6 +514,16 @@ def run_simulations(
                 bbox_inches="tight",
             )
 
+        if save_animation:
+            analyses.create_3D_animation(
+                qt,
+                np.max(ws) * 1.1,
+                pth2save=output_dir,
+                file_name=f"animation_{lambdas[kr]:d}",
+                str_title=rf"$\lambda={lambdas[kr]:.2f}$",
+                show_arrow=show_arrow,
+            )
+
     if not save_figures:
         plt.show()
 
@@ -525,8 +537,10 @@ if __name__ == "__main__":
         theory=StructuralTheory.KIRCHHOFF,
         n_gauss=15,
         lambdas=[key for key, value in DOWELL_DATABASE.items() if value > 0.0],
-        delta_t=1e-7,
+        delta_t=1e-6,
         t_end=0.2,
         parallel=False,
         save_figures=True,
+        save_animation=True,
+        show_arrow=True,
     )
